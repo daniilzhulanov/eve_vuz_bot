@@ -69,8 +69,7 @@ async def process_program(callback: types.CallbackQuery):
     log_user_action(user_id, f"Selected program: {program['name']}")
     
     await callback.answer()
-    await callback.message.answer(f"🔄 Загружаю данные: *{program['name']}*", 
-                                parse_mode=ParseMode.MARKDOWN)
+    await callback.message.answer(f"🔄 Загружаю данные: *{program['name']}*", parse_mode=ParseMode.MARKDOWN)
 
     try:
         log_user_action(user_id, f"Downloading data from {program['url']}")
@@ -90,6 +89,13 @@ async def process_program(callback: types.CallbackQuery):
         return
 
     try:
+        # Получаем дату и время из ячейки E6 (5-й столбец, 6-я строка)
+        report_datetime = df.iloc[5, 4] if pd.notna(df.iloc[5, 4]) else "не указана"
+        
+        # Форматируем дату, если это объект datetime
+        if pd.api.types.is_datetime64_any_dtype(df.iloc[5, 4]):
+            report_datetime = report_datetime.strftime("%d.%m.%Y %H:%M")
+        
         target_priority = program["priority"]
         places = program["places"]
         
@@ -117,7 +123,11 @@ async def process_program(callback: types.CallbackQuery):
             rank = applicant['rank'].values[0]
             score = applicant[18].values[0]
 
-            result_msg = f"🎯 Мест на программе: *{places}*\n\n✅ Твой рейтинг среди 1 приоритета: *{rank}*"
+            result_msg = (
+                f"📅 *Дата и время обновления данных:* {report_datetime}\n\n"
+                f"🎯 Мест на программе: *{places}*\n\n"
+                f"✅ Твой рейтинг среди 1 приоритета: *{rank}*"
+            )
 
             filtered_2 = df[
                 (df[7].astype(str).str.strip().str.upper() == "ДА") &
@@ -155,7 +165,11 @@ async def process_program(callback: types.CallbackQuery):
             rank_2 = applicant['rank_2'].values[0]
             score = applicant[18].values[0]
 
-            result_msg = f"🎯 Мест на программе: *{places}*\n\n✅ Твой рейтинг среди 2 приоритета: *{rank_2}*"
+            result_msg = (
+                f"📅 *Дата и время обновления данных:* {report_datetime}\n\n"
+                f"🎯 Мест на программе: *{places}*\n\n"
+                f"✅ Твой рейтинг среди 2 приоритета: *{rank_2}*"
+            )
 
             filtered_1 = df[
                 (df[7].astype(str).str.strip().str.upper() == "ДА") &
@@ -176,7 +190,7 @@ async def process_program(callback: types.CallbackQuery):
         error_msg = f"Ошибка обработки: {e}"
         log_user_action(user_id, error_msg)
         await callback.message.answer(f"❌ {error_msg}")
-
+        
 async def main():
     try:
         logger.info("Starting bot...")
