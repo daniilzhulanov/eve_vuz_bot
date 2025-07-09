@@ -1,14 +1,30 @@
-FROM python:3.9
+FROM python:3.9-slim
 
 ENV PYTHONUNBUFFERED=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=on
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
 
 WORKDIR /app
 
-COPY requirements.txt /app/requirements.txt
+# Устанавливаем системные зависимости для pandas и openpyxl
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    gcc \
+    python3-dev \
+    libxml2-dev \
+    libxslt-dev \
+    && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir --upgrade -r /app/requirements.txt
+COPY requirements.txt .
 
-COPY . /app
+# Устанавливаем Python-зависимости
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt && \
+    pip install openpyxl==3.1.2 --force-reinstall  # Явная установка
+
+COPY . .
+
+# Проверяем установку openpyxl
+RUN python -c "import openpyxl; print(f'Openpyxl version: {openpyxl.__version__}')"
 
 CMD ["python", "main.py"]
