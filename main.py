@@ -6,6 +6,19 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.enums import ParseMode
 import asyncio
 import os
+import logging
+from datetime import datetime
+
+# Настройка логирования
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.FileHandler("bot.log"),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 TOKEN = os.environ.get("TOKEN")
 if not TOKEN:
@@ -36,27 +49,42 @@ keyboard = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text=PROGRAMS["resh"]["name"], callback_data="resh")]
 ])
 
+def log_user_action(user_id: int, action: str):
+    """Логирование действий пользователя"""
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    logger.info(f"User ID: {user_id} - Action: {action} - Time: {timestamp}")
+
 @dp.message(F.text == "/start")
 async def start(message: types.Message):
+    log_user_action(message.from_user.id, "Started bot")
     await message.answer("Выбери программу для анализа рейтинга:", reply_markup=keyboard)
 
 @dp.callback_query(F.data.in_(PROGRAMS.keys()))
 async def process_program(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
     key = callback.data
     program = PROGRAMS[key]
+    
+    log_user_action(user_id, f"Selected program: {program['name']}")
+    
     await callback.answer()
     await callback.message.answer(f"🔄 Загружаю данные: *{program['name']}*", parse_mode=ParseMode.MARKDOWN)
 
     try:
+        log_user_action(user_id, f"Downloading data from {program['url']}")
         response = requests.get(program['url'], timeout=10)
         response.raise_for_status()
         df = pd.read_excel(BytesIO(response.content), header=None)
     except Exception as e:
-        await callback.message.answer(f"❌ Ошибка загрузки: {e}")
+        error_msg = f"Ошибка загрузки: {e}"
+        log_user_action(user_id, error_msg)
+        await callback.message.answer(f"❌ {error_msg}")
         return
 
     if df.shape[1] < 19:
-        await callback.message.answer("❌ Файл содержит недостаточно столбцов.")
+        error_msg = "Файл содержит недостаточно столбцов."
+        log_user_action(user_id, error_msg)
+        await callback.message.answer(f"❌ {error_msg}")
         return
 
     try:
@@ -73,6 +101,7 @@ async def process_program(callback: types.CallbackQuery):
             ].copy()
 
             if filtered_1.empty:
+                log_user_action(user_id, "No applicants with priority 1 found")
                 await callback.message.answer("⚠️ Нет абитуриентов с 1 приоритетом.")
                 return
 
@@ -83,6 +112,7 @@ async def process_program(callback: types.CallbackQuery):
             # Ищем абитуриента
             applicant = filtered_1[filtered_1[1].astype(str).str.strip() == "4272684"]
             if applicant.empty:
+                log_user_action(user_id, "Applicant 4272684 not found in priority 1")
                 await callback.message.answer("🚫 Номер 4272684 не найден среди 1 приоритета.")
                 return
 
@@ -113,6 +143,7 @@ async def process_program(callback: types.CallbackQuery):
             ].copy()
 
             if filtered_2.empty:
+                log_user_action(user_id, "No applicants with priority 2 found")
                 await callback.message.answer("⚠️ Нет абитуриентов со 2 приоритетом.")
                 return
 
@@ -123,6 +154,7 @@ async def process_program(callback: types.CallbackQuery):
             # Ищем абитуриента
             applicant = filtered_2[filtered_2[1].astype(str).str.strip() == "4272684"]
             if applicant.empty:
+                log_user_action(user_id, "Applicant 4272684 not found in priority 2")
                 await callback.message.answer("🚫 Номер 4272684 не найден среди 2 приоритета.")
                 return
 
@@ -144,12 +176,16 @@ async def process_program(callback: types.CallbackQuery):
             else:
                 result_msg += "\n\n🔺 Людей с 1 приоритетом и баллом выше: *0*"
 
+        log_user_action(user_id, f"Successfully processed request. Result: {result_msg}")
         await callback.message.answer(result_msg, parse_mode=ParseMode.MARKDOWN)
 
     except Exception as e:
-        await callback.message.answer(f"❌ Ошибка обработки: {e}")
+        error_msg = f"Ошибка обработки: {e}"
+        log_user_action(user_id, error_msg)
+        await callback.message.answer(f"❌ {error_msg}")
 
 async def main():
+    logger.info("Starting bot...")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
