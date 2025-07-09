@@ -136,7 +136,7 @@ async def process_program(callback: types.CallbackQuery):
 
                 if not filtered_2.empty:
                     higher_2_than_her = filtered_2[filtered_2[18] > score]
-                    count_higher_2 = len(higher_2_than_her)
+                    count_higher_2 = len(higher_2_than_her) + 1
                     result_msg += f"\n\n🔺 Людей со 2 приоритетом и баллом выше: *{count_higher_2}*"
                 else:
                     result_msg += "\n\n🔺 Людей со 2 приоритетом и баллом выше: *0*"
@@ -177,7 +177,7 @@ async def process_program(callback: types.CallbackQuery):
 
                 if not filtered_1.empty:
                     higher_1_than_her = filtered_1[filtered_1[18] > score]
-                    count_higher_1 = len(higher_1_than_her)
+                    count_higher_1 = len(higher_1_than_her) + 1
                     result_msg += f"\n\n🔺 Людей с 1 приоритетом и баллом выше: *{count_higher_1}*"
                 else:
                     result_msg += "\n\n🔺 Людей с 1 приоритетом и баллом выше: *0*"
