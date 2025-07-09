@@ -8,11 +8,15 @@ import asyncio
 import os
 import logging
 from datetime import datetime
+import nest_asyncio
+
+# Применяем исправление для работы с event loop
+nest_asyncio.apply()
 
 # Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[
         logging.FileHandler("bot.log"),
         logging.StreamHandler()
@@ -23,9 +27,6 @@ logger = logging.getLogger(__name__)
 TOKEN = os.environ.get("TOKEN")
 if not TOKEN:
     raise ValueError("Токен не найден. Установите переменную окружения TOKEN.")
-
-bot = Bot(token=TOKEN)
-dp = Dispatcher()
 
 # Словарь программ
 PROGRAMS = {
@@ -44,22 +45,22 @@ PROGRAMS = {
 }
 
 # Клавиатура выбора программы
-keyboard = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text=PROGRAMS["hse"]["name"], callback_data="hse")],
-    [InlineKeyboardButton(text=PROGRAMS["resh"]["name"], callback_data="resh")]
-])
+def get_program_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=PROGRAMS["hse"]["name"], callback_data="hse")],
+        [InlineKeyboardButton(text=PROGRAMS["resh"]["name"], callback_data="resh")]
+    ])
 
 def log_user_action(user_id: int, action: str):
     """Логирование действий пользователя"""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     logger.info(f"User ID: {user_id} - Action: {action} - Time: {timestamp}")
 
-@dp.message(F.text == "/start")
 async def start(message: types.Message):
     log_user_action(message.from_user.id, "Started bot")
-    await message.answer("Выбери программу для анализа рейтинга:", reply_markup=keyboard)
+    await message.answer("Выбери программу для анализа рейтинга:", 
+                        reply_markup=get_program_keyboard())
 
-@dp.callback_query(F.data.in_(PROGRAMS.keys()))
 async def process_program(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     key = callback.data
@@ -68,7 +69,8 @@ async def process_program(callback: types.CallbackQuery):
     log_user_action(user_id, f"Selected program: {program['name']}")
     
     await callback.answer()
-    await callback.message.answer(f"🔄 Загружаю данные: *{program['name']}*", parse_mode=ParseMode.MARKDOWN)
+    await callback.message.answer(f"🔄 Загружаю данные: *{program['name']}*", 
+                                parse_mode=ParseMode.MARKDOWN)
 
     try:
         log_user_action(user_id, f"Downloading data from {program['url']}")
@@ -88,13 +90,11 @@ async def process_program(callback: types.CallbackQuery):
         return
 
     try:
-        # Определяем приоритет и количество мест для этой программы
         target_priority = program["priority"]
         places = program["places"]
         
         if target_priority == 1:
             # ===== ЭКОНОМИКА (1 приоритет) =====
-            # Фильтруем людей с 1 приоритетом
             filtered_1 = df[
                 (df[7].astype(str).str.strip().str.upper() == "ДА") &
                 (df[11].astype(str).str.strip() == "1")
@@ -105,11 +105,9 @@ async def process_program(callback: types.CallbackQuery):
                 await callback.message.answer("⚠️ Нет абитуриентов с 1 приоритетом.")
                 return
 
-            # Сортируем по баллам
             filtered_1 = filtered_1.sort_values(by=18, ascending=False)
             filtered_1['rank'] = range(1, len(filtered_1) + 1)
 
-            # Ищем абитуриента
             applicant = filtered_1[filtered_1[1].astype(str).str.strip() == "4272684"]
             if applicant.empty:
                 log_user_action(user_id, "Applicant 4272684 not found in priority 1")
@@ -121,7 +119,6 @@ async def process_program(callback: types.CallbackQuery):
 
             result_msg = f"🎯 Мест на программе: *{places}*\n\n✅ Твой рейтинг среди 1 приоритета: *{rank}*"
 
-            # Дополнительно: количество людей со 2 приоритетом с баллом выше
             filtered_2 = df[
                 (df[7].astype(str).str.strip().str.upper() == "ДА") &
                 (df[11].astype(str).str.strip() == "2")
@@ -129,14 +126,13 @@ async def process_program(callback: types.CallbackQuery):
 
             if not filtered_2.empty:
                 higher_2_than_her = filtered_2[filtered_2[18] > score]
-                count_higher_2 = len(higher_2_than_her) + 1
+                count_higher_2 = len(higher_2_than_her)
                 result_msg += f"\n\n🔺 Людей со 2 приоритетом и баллом выше: *{count_higher_2}*"
             else:
                 result_msg += "\n\n🔺 Людей со 2 приоритетом и баллом выше: *0*"
 
         else:
             # ===== СОВБАК (2 приоритет) =====
-            # Фильтруем людей со 2 приоритетом
             filtered_2 = df[
                 (df[7].astype(str).str.strip().str.upper() == "ДА") &
                 (df[11].astype(str).str.strip() == "2")
@@ -147,11 +143,9 @@ async def process_program(callback: types.CallbackQuery):
                 await callback.message.answer("⚠️ Нет абитуриентов со 2 приоритетом.")
                 return
 
-            # Сортируем по баллам
             filtered_2 = filtered_2.sort_values(by=18, ascending=False)
             filtered_2['rank_2'] = range(1, len(filtered_2) + 1)
 
-            # Ищем абитуриента
             applicant = filtered_2[filtered_2[1].astype(str).str.strip() == "4272684"]
             if applicant.empty:
                 log_user_action(user_id, "Applicant 4272684 not found in priority 2")
@@ -163,7 +157,6 @@ async def process_program(callback: types.CallbackQuery):
 
             result_msg = f"🎯 Мест на программе: *{places}*\n\n✅ Твой рейтинг среди 2 приоритета: *{rank_2}*"
 
-            # Дополнительно: количество людей с 1 приоритетом с баллом выше
             filtered_1 = df[
                 (df[7].astype(str).str.strip().str.upper() == "ДА") &
                 (df[11].astype(str).str.strip() == "1")
@@ -171,7 +164,7 @@ async def process_program(callback: types.CallbackQuery):
 
             if not filtered_1.empty:
                 higher_1_than_her = filtered_1[filtered_1[18] > score]
-                count_higher_1 = len(higher_1_than_her) + 1
+                count_higher_1 = len(higher_1_than_her)
                 result_msg += f"\n\n🔺 Людей с 1 приоритетом и баллом выше: *{count_higher_1}*"
             else:
                 result_msg += "\n\n🔺 Людей с 1 приоритетом и баллом выше: *0*"
@@ -185,8 +178,23 @@ async def process_program(callback: types.CallbackQuery):
         await callback.message.answer(f"❌ {error_msg}")
 
 async def main():
-    logger.info("Starting bot...")
-    await dp.start_polling(bot)
+    try:
+        logger.info("Starting bot...")
+        bot = Bot(token=TOKEN)
+        dp = Dispatcher()
+        
+        # Регистрация обработчиков
+        dp.message.register(start, F.text == "/start")
+        dp.callback_query.register(process_program, F.data.in_(PROGRAMS.keys()))
+        
+        await dp.start_polling(bot)
+    except Exception as e:
+        logger.error(f"Bot crashed: {e}")
+        raise
+    finally:
+        if 'bot' in locals():
+            await bot.close()
+        logger.info("Bot stopped")
 
 if __name__ == "__main__":
     asyncio.run(main())
