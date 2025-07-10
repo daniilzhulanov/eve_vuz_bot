@@ -90,11 +90,11 @@ async def process_program(callback: types.CallbackQuery):
             return
 
         try:
-            # Получаем дату и время из ячейки E6 (5-й столбец, 6-я строка)
-            report_datetime = df.iloc[5, 4] if pd.notna(df.iloc[5, 4]) else "не указана"
+            # Получаем дату и время из ячейки F5 (6-й столбец, 5-я строка)
+            report_datetime = df.iloc[4, 5] if pd.notna(df.iloc[4, 5]) else "не указана"
             
             # Форматируем дату, если это объект datetime
-            if pd.api.types.is_datetime64_any_dtype(df.iloc[5, 4]):
+            if pd.api.types.is_datetime64_any_dtype(df.iloc[4, 5]):
                 report_datetime = report_datetime.strftime("%d.%m.%Y %H:%M")
             
             target_priority = program["priority"]
