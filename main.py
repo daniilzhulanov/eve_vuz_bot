@@ -45,17 +45,17 @@ PROGRAMS = {
     }
 }
 
-def get_program_keyboard():
-    return InlineKeyboardMarkup(inline_keyboard=[
+def get_program_keyboard(current_key=None):
+    keyboard = [
         [InlineKeyboardButton(text=PROGRAMS["hse"]["name"], callback_data="hse")],
-        [InlineKeyboardButton(text=PROGRAMS["resh"]["name"], callback_data="resh")],
-        [InlineKeyboardButton(text="🔄 Обновить данные", callback_data=key)]  # Добавлена кнопка обновления
-    ])
-
-def log_user_action(user_id: int, action: str):
-    """Логирование действий пользователя"""
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    logger.info(f"User ID: {user_id} - Action: {action} - Time: {timestamp}")
+        [InlineKeyboardButton(text=PROGRAMS["resh"]["name"], callback_data="resh")]
+    ]
+    
+    # Добавляем кнопку обновления только если передан current_key
+    if current_key and current_key in PROGRAMS:
+        keyboard.append([InlineKeyboardButton(text="🔄 Обновить данные", callback_data=current_key)])
+    
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 async def start(message: types.Message):
     log_user_action(message.from_user.id, "Started bot")
@@ -81,13 +81,13 @@ async def process_program(callback: types.CallbackQuery):
         except Exception as e:
             error_msg = f"Ошибка загрузки: {str(e)[:200]}"
             log_user_action(user_id, error_msg)
-            await callback.message.answer(f"❌ {error_msg}", reply_markup=get_program_keyboard())
+            await callback.message.answer(f"❌ {error_msg}", reply_markup=get_program_keyboard(key))
             return
 
         if df.shape[1] < 19:
             error_msg = "Файл содержит недостаточно столбцов."
             log_user_action(user_id, error_msg)
-            await callback.message.answer(f"❌ {error_msg}", reply_markup=get_program_keyboard())
+            await callback.message.answer(f"❌ {error_msg}", reply_markup=get_program_keyboard(key))
             return
 
         try:
@@ -109,7 +109,7 @@ async def process_program(callback: types.CallbackQuery):
 
                 if filtered_1.empty:
                     log_user_action(user_id, "No applicants with priority 1 found")
-                    await callback.message.answer("⚠️ Нет абитуриентов с 1 приоритетом.", reply_markup=get_program_keyboard())
+                    await callback.message.answer("⚠️ Нет абитуриентов с 1 приоритетом.", reply_markup=get_program_keyboard(key))
                     return
 
                 filtered_1 = filtered_1.sort_values(by=18, ascending=False)
@@ -118,7 +118,7 @@ async def process_program(callback: types.CallbackQuery):
                 applicant = filtered_1[filtered_1[1].astype(str).str.strip() == "4272684"]
                 if applicant.empty:
                     log_user_action(user_id, "Applicant 4272684 not found in priority 1")
-                    await callback.message.answer("🚫 Номер 4272684 не найден среди 1 приоритета.", reply_markup=get_program_keyboard())
+                    await callback.message.answer("🚫 Номер 4272684 не найден среди 1 приоритета.", reply_markup=get_program_keyboard(key))
                     return
 
                 rank = applicant['rank'].values[0]
@@ -150,7 +150,7 @@ async def process_program(callback: types.CallbackQuery):
 
                 if filtered_2.empty:
                     log_user_action(user_id, "No applicants with priority 2 found")
-                    await callback.message.answer("⚠️ Нет абитуриентов со 2 приоритетом.", reply_markup=get_program_keyboard())
+                    await callback.message.answer("⚠️ Нет абитуриентов со 2 приоритетом.", reply_markup=get_program_keyboard(key))
                     return
 
                 filtered_2 = filtered_2.sort_values(by=18, ascending=False)
@@ -159,7 +159,7 @@ async def process_program(callback: types.CallbackQuery):
                 applicant = filtered_2[filtered_2[1].astype(str).str.strip() == "4272684"]
                 if applicant.empty:
                     log_user_action(user_id, "Applicant 4272684 not found in priority 2")
-                    await callback.message.answer("🚫 Номер 4272684 не найден среди 2 приоритета.", reply_markup=get_program_keyboard())
+                    await callback.message.answer("🚫 Номер 4272684 не найден среди 2 приоритета.", reply_markup=get_program_keyboard(key))
                     return
 
                 rank_2 = applicant['rank_2'].values[0]
@@ -184,16 +184,16 @@ async def process_program(callback: types.CallbackQuery):
                     result_msg += "\n\n🔺 Людей с 1 приоритетом и баллом выше: *0*"
 
             log_user_action(user_id, f"Successfully processed request")
-            await callback.message.answer(result_msg, parse_mode=ParseMode.MARKDOWN, reply_markup=get_program_keyboard())
+            await callback.message.answer(result_msg, parse_mode=ParseMode.MARKDOWN, reply_markup=get_program_keyboard(key))
 
         except Exception as e:
             error_msg = f"Ошибка обработки данных: {str(e)[:200]}"
             log_user_action(user_id, error_msg)
-            await callback.message.answer(f"❌ {error_msg}", reply_markup=get_program_keyboard())
+            await callback.message.answer(f"❌ {error_msg}", reply_markup=get_program_keyboard(key))
 
     except Exception as e:
         logger.exception("Unexpected error in process_program")
-        await callback.message.answer("⚠️ Произошла непредвиденная ошибка", reply_markup=get_program_keyboard())
+        await callback.message.answer("⚠️ Произошла непредвиденная ошибка", reply_markup=get_program_keyboard(key))
 
 async def main():
     try:
