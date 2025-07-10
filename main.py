@@ -11,8 +11,10 @@ from datetime import datetime
 import aiohttp
 import nest_asyncio
 
+# Применяем исправление для работы с event loop
 nest_asyncio.apply()
 
+# Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -27,6 +29,7 @@ TOKEN = os.environ.get("TOKEN")
 if not TOKEN:
     raise ValueError("Токен не найден. Установите переменную окружения TOKEN.")
 
+# Словарь программ
 PROGRAMS = {
     "hse": {
         "name": "📊 Экономика",
@@ -42,6 +45,12 @@ PROGRAMS = {
     }
 }
 
+# Вспомогательные функции должны быть определены перед их использованием
+def log_user_action(user_id: int, action: str):
+    """Логирование действий пользователя"""
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    logger.info(f"User ID: {user_id} - Action: {action} - Time: {timestamp}")
+
 def get_program_keyboard(include_refresh=False, current_program=None):
     buttons = [
         [InlineKeyboardButton(text=PROGRAMS["hse"]["name"], callback_data="hse")],
@@ -53,14 +62,10 @@ def get_program_keyboard(include_refresh=False, current_program=None):
     
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-def log_user_action(user_id: int, action: str):
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    logger.info(f"User ID: {user_id} - Action: {action} - Time: {timestamp}")
-
+# Обработчики команд
 async def start(message: types.Message):
     log_user_action(message.from_user.id, "Started bot")
-    await message.answer("Выбери программу для анализа рейтинга:", 
-                        reply_markup=get_program_keyboard())
+    await message.answer("Выбери программу для анализа рейтинга:", reply_markup=get_program_keyboard())
 
 async def process_program(callback: types.CallbackQuery):
     user_id = callback.from_user.id
@@ -81,8 +86,7 @@ async def process_program(callback: types.CallbackQuery):
     try:
         log_user_action(user_id, f"Selected program: {program['name']}")
         await callback.answer()
-        msg = await callback.message.answer(f"🔄 Загружаю данные: *{program['name']}*", 
-                                          parse_mode=ParseMode.MARKDOWN)
+        msg = await callback.message.answer(f"🔄 Загружаю данные: *{program['name']}*", parse_mode=ParseMode.MARKDOWN)
 
         try:
             log_user_action(user_id, f"Downloading data from {program['url']}")
@@ -94,15 +98,13 @@ async def process_program(callback: types.CallbackQuery):
         except Exception as e:
             error_msg = f"Ошибка загрузки: {str(e)[:200]}"
             log_user_action(user_id, error_msg)
-            await callback.message.answer(f"❌ {error_msg}", 
-                                        reply_markup=get_program_keyboard(include_refresh=True, current_program=key))
+            await callback.message.answer(f"❌ {error_msg}", reply_markup=get_program_keyboard(include_refresh=True, current_program=key))
             return
 
         if df.shape[1] < 19:
             error_msg = "Файл содержит недостаточно столбцов."
             log_user_action(user_id, error_msg)
-            await callback.message.answer(f"❌ {error_msg}", 
-                                        reply_markup=get_program_keyboard(include_refresh=True, current_program=key))
+            await callback.message.answer(f"❌ {error_msg}", reply_markup=get_program_keyboard(include_refresh=True, current_program=key))
             return
 
         try:
