@@ -134,7 +134,7 @@ async def process_program(callback: types.CallbackQuery):
                 applicant = filtered_1[filtered_1[1].astype(str).str.strip() == "3976571"]  
                 if applicant.empty:
                     log_user_action(user_id, "Applicant 3976571 not found in priority 1")
-                    await callback.message.answer("🚫 Номер 3976571 не найден среди 3 приоритета.", 
+                    await callback.message.answer("🚫 Номер 3976571 не найден среди 1 приоритета.", 
                                                reply_markup=get_program_keyboard(include_refresh=True, current_program=key))
                     return
 
@@ -144,7 +144,7 @@ async def process_program(callback: types.CallbackQuery):
                 result_msg = (
                     f"📅 *Дата обновления данных:* {report_datetime}\n\n"
                     f"🎯 Мест на программе: *{places}*\n\n"
-                    f"✅ Твой рейтинг среди 3 приоритета: *{rank}*"
+                    f"✅ Твой рейтинг среди 1 приоритета: *{rank}*"
                 )
 
                 filtered_2 = df[
