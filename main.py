@@ -118,7 +118,7 @@ async def process_program(callback: types.CallbackQuery):
             
             if target_priority == 1:
                 filtered_1 = df[
-                    (df[7].astype(str).str.strip().str.upper() == "ДА") &
+                    (df[9].astype(str).str.strip().str.upper() == "ДА") &  # Изменено с 7 на 9 (столбец 10)
                     (df[11].astype(str).str.strip() == "1")
                 ].copy()
 
@@ -131,10 +131,10 @@ async def process_program(callback: types.CallbackQuery):
                 filtered_1 = filtered_1.sort_values(by=18, ascending=False)
                 filtered_1['rank'] = range(1, len(filtered_1) + 1)
 
-                applicant = filtered_1[filtered_1[1].astype(str).str.strip() == "4272684"]
+                applicant = filtered_1[filtered_1[1].astype(str).str.strip() == "3976571"]  # Измененный номер
                 if applicant.empty:
-                    log_user_action(user_id, "Applicant 4272684 not found in priority 1")
-                    await callback.message.answer("🚫 Номер 4272684 не найден среди 1 приоритета.", 
+                    log_user_action(user_id, "Applicant 3976571 not found in priority 1")
+                    await callback.message.answer("🚫 Номер 3976571 не найден среди 1 приоритета.", 
                                                reply_markup=get_program_keyboard(include_refresh=True, current_program=key))
                     return
 
@@ -148,7 +148,7 @@ async def process_program(callback: types.CallbackQuery):
                 )
 
                 filtered_2 = df[
-                    (df[7].astype(str).str.strip().str.upper() == "ДА") &
+                    (df[9].astype(str).str.strip().str.upper() == "ДА") &  # Изменено с 7 на 9 (столбец 10)
                     (df[11].astype(str).str.strip() == "2")
                 ].copy()
 
@@ -161,7 +161,7 @@ async def process_program(callback: types.CallbackQuery):
 
             else:
                 filtered_2 = df[
-                    (df[7].astype(str).str.strip().str.upper() == "ДА") &
+                    (df[9].astype(str).str.strip().str.upper() == "ДА") &  # Изменено с 7 на 9 (столбец 10)
                     (df[11].astype(str).str.strip() == "2")
                 ].copy()
 
@@ -174,10 +174,10 @@ async def process_program(callback: types.CallbackQuery):
                 filtered_2 = filtered_2.sort_values(by=18, ascending=False)
                 filtered_2['rank_2'] = range(1, len(filtered_2) + 1)
 
-                applicant = filtered_2[filtered_2[1].astype(str).str.strip() == "4272684"]
+                applicant = filtered_2[filtered_2[1].astype(str).str.strip() == "3976571"]  # Измененный номер
                 if applicant.empty:
-                    log_user_action(user_id, "Applicant 4272684 not found in priority 2")
-                    await callback.message.answer("🚫 Номер 4272684 не найден среди 2 приоритета.", 
+                    log_user_action(user_id, "Applicant 3976571 not found in priority 2")
+                    await callback.message.answer("🚫 Номер 3976571 не найден среди 2 приоритета.", 
                                                reply_markup=get_program_keyboard(include_refresh=True, current_program=key))
                     return
 
@@ -191,7 +191,7 @@ async def process_program(callback: types.CallbackQuery):
                 )
 
                 filtered_1 = df[
-                    (df[7].astype(str).str.strip().str.upper() == "ДА") &
+                    (df[9].astype(str).str.strip().str.upper() == "ДА") &  # Изменено с 7 на 9 (столбец 10)
                     (df[11].astype(str).str.strip() == "1")
                 ].copy()
 
