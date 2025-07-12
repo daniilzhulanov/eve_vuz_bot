@@ -116,7 +116,7 @@ async def process_program(callback: types.CallbackQuery):
             target_priority = program["priority"]
             places = program["places"]
             
-            if target_priority == 3:
+            if target_priority == 1:
                 filtered_1 = df[
                     (df[9].astype(str).str.strip().str.upper() == "ДА") & 
                     (df[11].astype(str).str.strip() == "1")
@@ -124,7 +124,7 @@ async def process_program(callback: types.CallbackQuery):
 
                 if filtered_1.empty:
                     log_user_action(user_id, "No applicants with priority 1 found")
-                    await callback.message.answer("⚠️ Нет абитуриентов с 3 приоритетом.", 
+                    await callback.message.answer("⚠️ Нет абитуриентов с 1 приоритетом.", 
                                                reply_markup=get_program_keyboard(include_refresh=True, current_program=key))
                     return
 
