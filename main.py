@@ -260,117 +260,132 @@ async def parse_spbu_economics(message: types.Message):
     try:
         await message.answer("🔄 Загружаю данные по СПбГУ (Экономика)...")
         
-        async with aiohttp.ClientSession() as session:
-            # Получаем начальную страницу для токена
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'ru-RU,ru;q=0.8,en-US;q=0.5,en;q=0.3',
+        }
+
+        async with aiohttp.ClientSession(headers=headers) as session:
+            # Первый запрос для получения cookies и CSRF
             async with session.get(SPBU_SETTINGS['search_url']) as resp:
                 if resp.status != 200:
-                    await message.answer("❌ Не удалось загрузить страницу СПбГУ")
+                    await message.answer("❌ Ошибка доступа к сайту СПбГУ")
                     return
-                
+
                 html = await resp.text()
                 soup = BeautifulSoup(html, 'html.parser')
                 
-                # Более надежное извлечение CSRF-токена
-                csrf_input = soup.find('input', {'name': '_csrf'})
-                if not csrf_input:
-                    await message.answer("❌ Не найден CSRF-токен на странице")
-                    return
+                # Альтернативные способы поиска CSRF-токена
+                csrf_token = None
+                meta_token = soup.find('meta', {'name': 'csrf-token'})
+                if meta_token:
+                    csrf_token = meta_token.get('content')
+                else:
+                    script_content = soup.find('script', string=lambda t: t and 'csrfToken' in t)
+                    if script_content:
+                        import re
+                        match = re.search(r'csrfToken\s*:\s*[\'"]([^\'"]+)[\'"]', str(script_content))
+                        if match:
+                            csrf_token = match.group(1)
                 
-                csrf_token = csrf_input.get('value')
                 if not csrf_token:
-                    await message.answer("❌ Пустой CSRF-токен")
+                    await message.answer("❌ Не удалось найти CSRF-токен. Возможно, изменилась структура сайта.")
                     return
 
-            # Подготавливаем данные для запроса
-            form_data = aiohttp.FormData()
-            form_data.add_field('_csrf', csrf_token)
-            form_data.add_field('TrajectoryFilter[trajectory]', SPBU_SETTINGS['params']['trajectory'])
-            form_data.add_field('ScenarioFilter[scenario]', SPBU_SETTINGS['params']['scenario'])
-            form_data.add_field('CompetitiveGroupFilter[group]', SPBU_SETTINGS['params']['group'])
-            form_data.add_field('ajax', 'view-filters-form')
+            # Подготовка данных для AJAX-запроса
+            form_data = {
+                '_csrf': csrf_token,
+                'TrajectoryFilter[trajectory]': SPBU_SETTINGS['params']['trajectory'],
+                'ScenarioFilter[scenario]': SPBU_SETTINGS['params']['scenario'],
+                'CompetitiveGroupFilter[group]': SPBU_SETTINGS['params']['group'],
+                'ajax': 'view-filters-form'
+            }
 
-            # Отправляем POST-запрос
+            # Отправка AJAX-запроса
             async with session.post(
                 SPBU_SETTINGS['search_url'],
                 data=form_data,
                 headers={
                     'X-Requested-With': 'XMLHttpRequest',
-                    'Referer': SPBU_SETTINGS['search_url']
+                    'X-CSRF-Token': csrf_token,
+                    'Referer': SPBU_SETTINGS['search_url'],
+                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
                 }
             ) as resp:
                 if resp.status != 200:
-                    await message.answer("❌ Ошибка при запросе данных")
+                    await message.answer(f"❌ Ошибка сервера: {resp.status}")
                     return
-                
+
                 try:
                     data = await resp.json()
-                except:
-                    await message.answer("❌ Неверный формат ответа от сервера")
+                except Exception as e:
+                    await message.answer("❌ Не удалось обработать ответ сервера")
                     return
 
                 if not data.get('success'):
-                    await message.answer("❌ Ошибка при формировании списка")
+                    error_msg = data.get('message', 'Неизвестная ошибка сервера')
+                    await message.answer(f"❌ Ошибка сервера: {error_msg}")
                     return
-                
-                # Парсим HTML с результатами
+
+                # Парсинг результатов
                 html = data.get('content', '')
                 if not html:
-                    await message.answer("❌ Нет данных в ответе")
+                    await message.answer("❌ Сервер не вернул данные")
                     return
-                
+
                 soup = BeautifulSoup(html, 'html.parser')
-                table = soup.find('table', {'class': 'table'})
+                table = soup.find('table')
                 
                 if not table:
                     await message.answer("❌ Не найдена таблица с результатами")
                     return
-                
-                # Обрабатываем таблицу
-                rows = table.find_all('tr')[1:]  # Пропускаем заголовок
-                if not rows:
-                    await message.answer("❌ Нет данных в таблице")
-                    return
-                
+
+                # Обработка таблицы
                 applicants = []
-                for row in rows:
+                for row in table.find_all('tr')[1:]:  # Пропускаем заголовок
                     cols = row.find_all('td')
                     if len(cols) >= 6:
                         try:
-                            applicant = {
+                            applicants.append({
                                 'id': cols[0].text.strip(),
+                                'name': cols[1].text.strip(),
                                 'priority': int(cols[3].text.strip()),
                                 'score': float(cols[4].text.strip()),
                                 'original': cols[5].text.strip().lower() == 'да'
-                            }
-                            applicants.append(applicant)
+                            })
                         except (ValueError, AttributeError):
                             continue
-                
+
                 if not applicants:
-                    await message.answer("❌ Не удалось извлечь данные абитуриентов")
+                    await message.answer("❌ Нет данных об абитуриентах")
                     return
-                
-                # Фильтруем по 2 приоритету и оригиналам
+
+                # Фильтрация и анализ
                 priority_2 = [a for a in applicants if a['priority'] == 2 and a['original']]
                 if not priority_2:
-                    await message.answer("ℹ️ Нет абитуриентов с 2 приоритетом и оригиналами")
+                    await message.answer("ℹ️ Нет абитуриентов с 2 приоритетом")
                     return
-                
+
                 priority_2_sorted = sorted(priority_2, key=lambda x: x['score'], reverse=True)
                 
-                # Ищем нашего абитуриента
-                target_pos = None
-                for i, applicant in enumerate(priority_2_sorted, 1):
-                    if applicant['id'] == SPBU_SETTINGS['target_id']:
-                        target_pos = i
-                        target_score = applicant['score']
-                        break
-                
+                # Поиск конкретного абитуриента
+                target_pos = next(
+                    (i+1 for i, a in enumerate(priority_2_sorted) 
+                    if a['id'] == SPBU_SETTINGS['target_id']), 
+                    None
+                )
+
                 if not target_pos:
-                    await message.answer("🚫 Ваш номер не найден в списке 2 приоритета")
+                    await message.answer("🚫 Ваш номер не найден в списке")
                     return
-                
-                # Формируем отчет
+
+                target_score = next(
+                    a['score'] for a in priority_2_sorted 
+                    if a['id'] == SPBU_SETTINGS['target_id']
+                )
+
+                # Формирование отчета
                 higher = sum(1 for a in priority_2_sorted if a['score'] > target_score)
                 total = len(priority_2_sorted)
                 
@@ -383,7 +398,7 @@ async def parse_spbu_economics(message: types.Message):
                 )
                 
                 await message.answer(report)
-                
+
     except Exception as e:
         logger.error(f"SPBU parse error: {str(e)}", exc_info=True)
         await message.answer("❌ Произошла ошибка при обработке данных СПбГУ")
