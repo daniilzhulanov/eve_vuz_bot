@@ -27,6 +27,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Функция для логирования действий пользователей
+def log_user_action(user_id: int, action: str):
+    """Логирует действия пользователя"""
+    logger.info(f"User {user_id}: {action}")
+
 TOKEN = os.environ.get("TOKEN")
 if not TOKEN:
     raise ValueError("Токен не найден. Установите переменную окружения TOKEN.")
