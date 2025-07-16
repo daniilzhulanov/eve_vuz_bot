@@ -65,7 +65,7 @@ MSU_SETTINGS = {
     "url": "https://cpk.msu.ru/exams/",
     "target_title_part": "Математика ДВИ (четвертый поток) 18 Июля 2025 г.",
     "target_surname": "МИЛАЕВА",
-    "check_interval": 3000,
+    "check_interval": 300,
     "notification_users": set()
 }
 
@@ -261,59 +261,104 @@ async def parse_spbu_economics(message: types.Message):
         await message.answer("🔄 Загружаю данные по СПбГУ (Экономика)...")
         
         async with aiohttp.ClientSession() as session:
-            # Получаем CSRF-токен
+            # Получаем начальную страницу для токена
             async with session.get(SPBU_SETTINGS['search_url']) as resp:
-                soup = BeautifulSoup(await resp.text(), 'html.parser')
-                csrf_token = soup.find('input', {'name': '_csrf'})['value']
+                if resp.status != 200:
+                    await message.answer("❌ Не удалось загрузить страницу СПбГУ")
+                    return
                 
-            # Отправляем POST-запрос с параметрами
-            form_data = {
-                '_csrf': csrf_token,
-                'TrajectoryFilter[trajectory]': SPBU_SETTINGS['params']['trajectory'],
-                'ScenarioFilter[scenario]': SPBU_SETTINGS['params']['scenario'],
-                'CompetitiveGroupFilter[group]': SPBU_SETTINGS['params']['group'],
-                'ajax': 'view-filters-form'
-            }
-            
+                html = await resp.text()
+                soup = BeautifulSoup(html, 'html.parser')
+                
+                # Более надежное извлечение CSRF-токена
+                csrf_input = soup.find('input', {'name': '_csrf'})
+                if not csrf_input:
+                    await message.answer("❌ Не найден CSRF-токен на странице")
+                    return
+                
+                csrf_token = csrf_input.get('value')
+                if not csrf_token:
+                    await message.answer("❌ Пустой CSRF-токен")
+                    return
+
+            # Подготавливаем данные для запроса
+            form_data = aiohttp.FormData()
+            form_data.add_field('_csrf', csrf_token)
+            form_data.add_field('TrajectoryFilter[trajectory]', SPBU_SETTINGS['params']['trajectory'])
+            form_data.add_field('ScenarioFilter[scenario]', SPBU_SETTINGS['params']['scenario'])
+            form_data.add_field('CompetitiveGroupFilter[group]', SPBU_SETTINGS['params']['group'])
+            form_data.add_field('ajax', 'view-filters-form')
+
+            # Отправляем POST-запрос
             async with session.post(
                 SPBU_SETTINGS['search_url'],
                 data=form_data,
-                headers={'X-Requested-With': 'XMLHttpRequest'}
+                headers={
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'Referer': SPBU_SETTINGS['search_url']
+                }
             ) as resp:
-                data = await resp.json()
+                if resp.status != 200:
+                    await message.answer("❌ Ошибка при запросе данных")
+                    return
+                
+                try:
+                    data = await resp.json()
+                except:
+                    await message.answer("❌ Неверный формат ответа от сервера")
+                    return
+
                 if not data.get('success'):
                     await message.answer("❌ Ошибка при формировании списка")
                     return
                 
-                # Получаем HTML с таблицей
-                html = data['content']
+                # Парсим HTML с результатами
+                html = data.get('content', '')
+                if not html:
+                    await message.answer("❌ Нет данных в ответе")
+                    return
+                
                 soup = BeautifulSoup(html, 'html.parser')
                 table = soup.find('table', {'class': 'table'})
                 
                 if not table:
-                    await message.answer("❌ Не найдена таблица с данными")
+                    await message.answer("❌ Не найдена таблица с результатами")
                     return
                 
-                # Парсим таблицу
+                # Обрабатываем таблицу
                 rows = table.find_all('tr')[1:]  # Пропускаем заголовок
-                applicants = []
+                if not rows:
+                    await message.answer("❌ Нет данных в таблице")
+                    return
                 
+                applicants = []
                 for row in rows:
                     cols = row.find_all('td')
                     if len(cols) >= 6:
-                        applicant = {
-                            'id': cols[0].text.strip(),
-                            'priority': int(cols[3].text.strip()),
-                            'score': float(cols[4].text.strip()),
-                            'original': cols[5].text.strip() == 'Да'
-                        }
-                        applicants.append(applicant)
+                        try:
+                            applicant = {
+                                'id': cols[0].text.strip(),
+                                'priority': int(cols[3].text.strip()),
+                                'score': float(cols[4].text.strip()),
+                                'original': cols[5].text.strip().lower() == 'да'
+                            }
+                            applicants.append(applicant)
+                        except (ValueError, AttributeError):
+                            continue
+                
+                if not applicants:
+                    await message.answer("❌ Не удалось извлечь данные абитуриентов")
+                    return
                 
                 # Фильтруем по 2 приоритету и оригиналам
                 priority_2 = [a for a in applicants if a['priority'] == 2 and a['original']]
+                if not priority_2:
+                    await message.answer("ℹ️ Нет абитуриентов с 2 приоритетом и оригиналами")
+                    return
+                
                 priority_2_sorted = sorted(priority_2, key=lambda x: x['score'], reverse=True)
                 
-                # Находим позицию абитуриента
+                # Ищем нашего абитуриента
                 target_pos = None
                 for i, applicant in enumerate(priority_2_sorted, 1):
                     if applicant['id'] == SPBU_SETTINGS['target_id']:
@@ -322,26 +367,26 @@ async def parse_spbu_economics(message: types.Message):
                         break
                 
                 if not target_pos:
-                    await message.answer("🚫 Абитуриент не найден в списке 2 приоритета")
+                    await message.answer("🚫 Ваш номер не найден в списке 2 приоритета")
                     return
                 
-                # Считаем количество с более высокими баллами
-                higher = len([a for a in priority_2_sorted if a['score'] > target_score])
-                
                 # Формируем отчет
+                higher = sum(1 for a in priority_2_sorted if a['score'] > target_score)
+                total = len(priority_2_sorted)
+                
                 report = (
                     f"📊 СПбГУ Экономика (2 приоритет)\n\n"
-                    f"👤 Ваша позиция: {target_pos}\n"
+                    f"👤 Ваша позиция: {target_pos} из {total}\n"
                     f"🎯 Ваш балл: {target_score}\n"
                     f"🔝 Абитуриентов с более высокими баллами: {higher}\n"
-                    f"📌 Всего оригиналов: {len(priority_2)}"
+                    f"📌 Всего оригиналов: {total}"
                 )
                 
                 await message.answer(report)
                 
     except Exception as e:
-        logger.error(f"SPBU parse error: {e}")
-        await message.answer(f"❌ Ошибка при обработке данных: {str(e)[:200]}")
+        logger.error(f"SPBU parse error: {str(e)}", exc_info=True)
+        await message.answer("❌ Произошла ошибка при обработке данных СПбГУ")
 
 # Обработчики МГУ
 async def check_msu_lists(message: types.Message):
