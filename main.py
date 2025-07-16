@@ -11,7 +11,7 @@ from datetime import datetime
 import aiohttp
 import nest_asyncio
 from bs4 import BeautifulSoup
-import time
+from aiogram.exceptions import TelegramRetryAfter
 
 # Применяем исправление для работы с event loop
 nest_asyncio.apply()
@@ -51,7 +51,9 @@ HSE_PROGRAMS = {
 MSU_SETTINGS = {
     "url": "https://cpk.msu.ru/exams/",
     "target_title_part": "Математика ДВИ (четвертый поток) 18 Июля 2025 г.",
-    "target_surname": "МИЛАЕВА"
+    "target_surname": "МИЛАЕВА",
+    "check_interval": 300,  # интервал проверки в секундах (5 минут)
+    "notification_users": set()  # множество пользователей, подписавшихся на уведомления
 }
 
 # Вспомогательные функции
@@ -60,14 +62,21 @@ def log_user_action(user_id: int, action: str):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     logger.info(f"User ID: {user_id} - Action: {action} - Time: {timestamp}")
 
+def add_fixed_buttons(keyboard: InlineKeyboardMarkup):
+    """Добавляет фиксированные кнопки МГУ и ВШЭ внизу"""
+    keyboard.inline_keyboard.append([
+        InlineKeyboardButton(text="🏛 ВШЭ", callback_data="hse_menu"),
+        InlineKeyboardButton(text="🏫 МГУ", callback_data="msu_menu")
+    ])
+    return keyboard
+
 def get_main_keyboard():
-    buttons = [
-        [InlineKeyboardButton(text="🏛 ВШЭ", callback_data="hse_menu")],
-        [InlineKeyboardButton(text="🏫 МГУ", callback_data="msu_menu")]
-    ]
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
+    """Главное меню с фиксированными кнопками"""
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[])
+    return add_fixed_buttons(keyboard)
 
 def get_hse_program_keyboard(include_refresh=False, current_program=None):
+    """Клавиатура для выбора программы ВШЭ"""
     buttons = [
         [InlineKeyboardButton(text=HSE_PROGRAMS["hse"]["name"], callback_data="hse")],
         [InlineKeyboardButton(text=HSE_PROGRAMS["resh"]["name"], callback_data="resh")]
@@ -78,26 +87,31 @@ def get_hse_program_keyboard(include_refresh=False, current_program=None):
     
     buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")])
     
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+    return add_fixed_buttons(keyboard)
 
 def get_msu_keyboard():
+    """Клавиатура для МГУ"""
     buttons = [
-        [InlineKeyboardButton(text="🔍 Проверить списки", callback_data="check_msu")],
+        [InlineKeyboardButton(text="🔍 Проверить сейчас", callback_data="check_msu")],
+        [InlineKeyboardButton(text="🔔 Подписаться на уведомление", callback_data="subscribe_msu")],
+        [InlineKeyboardButton(text="🔕 Отписаться от уведомлений", callback_data="unsubscribe_msu")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
     ]
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+    return add_fixed_buttons(keyboard)
 
 # Обработчики команд
 async def start(message: types.Message):
     log_user_action(message.from_user.id, "Started bot")
-    await message.answer("Выбери университет для анализа:", reply_markup=get_main_keyboard())
+    await message.answer("Выберите действие:", reply_markup=get_main_keyboard())
 
 async def back_to_main_menu(callback: types.CallbackQuery):
-    await callback.message.edit_text("Выбери университет для анализа:", reply_markup=get_main_keyboard())
+    await callback.message.edit_text("Выберите действие:", reply_markup=get_main_keyboard())
     await callback.answer()
 
 async def show_hse_menu(callback: types.CallbackQuery):
-    await callback.message.edit_text("Выбери программу ВШЭ для анализа рейтинга:", 
+    await callback.message.edit_text("Выберите программу ВШЭ для анализа рейтинга:", 
                                    reply_markup=get_hse_program_keyboard())
     await callback.answer()
 
@@ -264,16 +278,18 @@ async def check_msu_lists(callback: types.CallbackQuery):
     try:
         log_user_action(user_id, "Checking MSU lists")
         
-        # Отправляем сообщение о начале проверки
-        msg = await callback.message.answer("🔍 Начинаю проверку списков МГУ...")
-        
-        # Вызываем функцию проверки
+        # Проверяем текущий статус
         found = await check_msu_page()
         
         if found:
             result_msg = "🎉 Страница с результатами появилась! Фамилия МИЛАЕВА найдена."
+            # Удаляем пользователя из списка, так как уже нашли
+            MSU_SETTINGS["notification_users"].discard(user_id)
         else:
-            result_msg = "ℹ️ Страница с результатами еще не появилась или фамилия не найдена."
+            result_msg = (
+                "ℹ️ Страница с результатами еще не появилась или фамилия не найдена.\n\n"
+                "Вы можете подписаться на уведомления ниже ⬇️"
+            )
         
         await callback.message.answer(result_msg, reply_markup=get_msu_keyboard())
         
@@ -281,6 +297,24 @@ async def check_msu_lists(callback: types.CallbackQuery):
         error_msg = f"Ошибка при проверке списков МГУ: {str(e)}"
         log_user_action(user_id, error_msg)
         await callback.message.answer(error_msg, reply_markup=get_msu_keyboard())
+
+async def subscribe_msu_notifications(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    MSU_SETTINGS["notification_users"].add(user_id)
+    await callback.answer("✅ Вы подписались на уведомления о списках МГУ")
+    await callback.message.answer(
+        "Вы будете получать уведомления, как только списки появятся.",
+        reply_markup=get_msu_keyboard()
+    )
+
+async def unsubscribe_msu_notifications(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    MSU_SETTINGS["notification_users"].discard(user_id)
+    await callback.answer("🔕 Вы отписались от уведомлений о списках МГУ")
+    await callback.message.answer(
+        "Вы больше не будете получать уведомления о списках МГУ.",
+        reply_markup=get_msu_keyboard()
+    )
 
 async def check_msu_page():
     url = MSU_SETTINGS["url"]
@@ -335,11 +369,43 @@ async def check_msu_page():
         logger.error(f"Ошибка при проверке МГУ: {e}")
         return False
 
+async def start_msu_monitoring(bot: Bot):
+    while True:
+        try:
+            # Проверяем страницу МГУ
+            found = await check_msu_page()
+            
+            if found and MSU_SETTINGS["notification_users"]:
+                # Если страница найдена и есть подписчики
+                notification_msg = "🚨 Появились списки МГУ! Фамилия МИЛАЕВА найдена."
+                
+                # Отправляем уведомления всем подписчикам
+                for user_id in list(MSU_SETTINGS["notification_users"]):
+                    try:
+                        await bot.send_message(user_id, notification_msg)
+                        # Удаляем пользователя из списка после уведомления
+                        MSU_SETTINGS["notification_users"].remove(user_id)
+                    except TelegramRetryAfter as e:
+                        # Если превышен лимит сообщений, ждем
+                        await asyncio.sleep(e.retry_after)
+                    except Exception as e:
+                        logger.error(f"Ошибка отправки уведомления пользователю {user_id}: {e}")
+            
+            # Ждем перед следующей проверкой
+            await asyncio.sleep(MSU_SETTINGS["check_interval"])
+            
+        except Exception as e:
+            logger.error(f"Ошибка в мониторинге МГУ: {e}")
+            await asyncio.sleep(60)  # ждем минуту при ошибке
+
 async def main():
     try:
         logger.info("Starting bot...")
         bot = Bot(token=TOKEN)
         dp = Dispatcher()
+        
+        # Запускаем фоновую задачу мониторинга МГУ
+        asyncio.create_task(start_msu_monitoring(bot))
         
         # Регистрация обработчиков
         dp.message.register(start, F.text == "/start")
@@ -348,6 +414,8 @@ async def main():
         dp.callback_query.register(show_msu_menu, F.data == "msu_menu")
         dp.callback_query.register(process_hse_program, F.data.startswith("hse") | F.data.startswith("resh") | F.data.startswith("refresh_"))
         dp.callback_query.register(check_msu_lists, F.data == "check_msu")
+        dp.callback_query.register(subscribe_msu_notifications, F.data == "subscribe_msu")
+        dp.callback_query.register(unsubscribe_msu_notifications, F.data == "unsubscribe_msu")
         
         await dp.start_polling(bot)
     except asyncio.CancelledError:
