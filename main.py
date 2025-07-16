@@ -1,5 +1,4 @@
 import pandas as pd
-import requests
 from io import BytesIO
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
@@ -7,7 +6,6 @@ from aiogram.enums import ParseMode
 import asyncio
 import os
 import logging
-from datetime import datetime
 import aiohttp
 import nest_asyncio
 from bs4 import BeautifulSoup
@@ -73,7 +71,7 @@ def get_hse_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📊 Экономика"), KeyboardButton(text="📘 Совбак")],
-            [KeyboardButton(text="🔄 Обновить"), KeyboardButton(text="🔙 Назад")]
+            [KeyboardButton(text="🔙 Назад")]
         ],
         resize_keyboard=True,
         persistent=True
@@ -124,9 +122,6 @@ async def process_hse_program(message: types.Message):
         key = "hse"
     elif message.text == "📘 Совбак":
         key = "resh"
-    elif message.text == "🔄 Обновить":
-        await message.answer("Данные обновлены!")
-        return
     
     if not key or key not in HSE_PROGRAMS:
         await message.answer("Неизвестная команда")
@@ -153,8 +148,6 @@ async def process_hse_program(message: types.Message):
         
         target_priority = program["priority"]
         places = program["places"]
-        
-        # Инициализируем result_msg в начале
         result_msg = f"📅 Дата обновления данных: {report_datetime}\n\n🎯 Мест на программе: {places}\n\n"
         
         if target_priority == 1:
@@ -192,7 +185,7 @@ async def process_hse_program(message: types.Message):
             else:
                 result_msg += "\n\n🔺 Людей со 2 приоритетом и баллом выше: 0"
 
-        else:  # Обработка для приоритета 2 (Совбак)
+        else:
             filtered_2 = df[
                 (df[9].astype(str).str.strip().str.upper() == "ДА") &  
                 (df[11].astype(str).str.strip() == "2")
@@ -232,6 +225,7 @@ async def process_hse_program(message: types.Message):
     except Exception as e:
         logger.error(f"Error in process_hse_program: {e}")
         await message.answer(f"❌ Ошибка при обработке данных: {str(e)[:200]}")
+
 async def check_msu_lists(message: types.Message):
     user_id = message.from_user.id
     await message.answer("Проверяю списки МГУ...")
@@ -306,7 +300,7 @@ async def main():
         dp.message.register(handle_hse, F.text == "🏛 ВШЭ")
         dp.message.register(handle_msu, F.text == "🏫 МГУ")
         dp.message.register(handle_back, F.text == "🔙 Назад")
-        dp.message.register(process_hse_program, F.text.in_(["📊 Экономика", "📘 Совбак", "🔄 Обновить"]))
+        dp.message.register(process_hse_program, F.text.in_(["📊 Экономика", "📘 Совбак"]))
         dp.message.register(check_msu_lists, F.text == "🔍 Проверить сейчас")
         dp.message.register(subscribe_msu_notifications, F.text == "🔔 Подписаться")
         dp.message.register(unsubscribe_msu_notifications, F.text == "🔕 Отписаться")
