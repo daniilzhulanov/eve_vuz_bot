@@ -154,6 +154,9 @@ async def process_hse_program(message: types.Message):
         target_priority = program["priority"]
         places = program["places"]
         
+        # Инициализируем result_msg в начале
+        result_msg = f"📅 Дата обновления данных: {report_datetime}\n\n🎯 Мест на программе: {places}\n\n"
+        
         if target_priority == 1:
             filtered_1 = df[
                 (df[9].astype(str).str.strip().str.upper() == "ДА") & 
@@ -175,11 +178,7 @@ async def process_hse_program(message: types.Message):
             rank = applicant['rank'].values[0]
             score = applicant[18].values[0]
 
-            result_msg = (
-                f"📅 Дата обновления данных: {report_datetime}\n\n"
-                f"🎯 Мест на программе: {places}\n\n"
-                f"✅ Твой рейтинг среди 1 приоритета: {rank}"
-            )
+            result_msg += f"✅ Твой рейтинг среди 1 приоритета: {rank}"
 
             filtered_2 = df[
                 (df[9].astype(str).str.strip().str.upper() == "ДА") & 
@@ -193,12 +192,46 @@ async def process_hse_program(message: types.Message):
             else:
                 result_msg += "\n\n🔺 Людей со 2 приоритетом и баллом выше: 0"
 
+        else:  # Обработка для приоритета 2 (Совбак)
+            filtered_2 = df[
+                (df[9].astype(str).str.strip().str.upper() == "ДА") &  
+                (df[11].astype(str).str.strip() == "2")
+            ].copy()
+
+            if filtered_2.empty:
+                await message.answer("⚠️ Нет абитуриентов со 2 приоритетом.")
+                return
+
+            filtered_2 = filtered_2.sort_values(by=18, ascending=False)
+            filtered_2['rank_2'] = range(1, len(filtered_2) + 1)
+
+            applicant = filtered_2[filtered_2[1].astype(str).str.strip() == "4272684"]  
+            if applicant.empty:
+                await message.answer("🚫 Номер 4272684 не найден среди 2 приоритета.")
+                return
+
+            rank_2 = applicant['rank_2'].values[0]
+            score = applicant[18].values[0]
+
+            result_msg += f"✅ Твой рейтинг среди 2 приоритета: {rank_2}"
+
+            filtered_1 = df[
+                (df[9].astype(str).str.strip().str.upper() == "ДА") & 
+                (df[11].astype(str).str.strip() == "1")
+            ].copy()
+
+            if not filtered_1.empty:
+                higher_1_than_her = filtered_1[filtered_1[18] > score]
+                count_higher_1 = len(higher_1_than_her)
+                result_msg += f"\n\n🔺 Людей с 1 приоритетом и баллом выше: {count_higher_1}"
+            else:
+                result_msg += "\n\n🔺 Людей с 1 приоритетом и баллом выше: 0"
+
         await message.answer(result_msg)
 
     except Exception as e:
         logger.error(f"Error in process_hse_program: {e}")
-        await message.answer(f"❌ Ошибка: {str(e)[:200]}")
-
+        await message.answer(f"❌ Ошибка при обработке данных: {str(e)[:200]}")
 async def check_msu_lists(message: types.Message):
     user_id = message.from_user.id
     await message.answer("Проверяю списки МГУ...")
