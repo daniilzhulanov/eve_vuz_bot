@@ -430,6 +430,15 @@ async def main():
         dp.message.register(handle_hse, F.text == "🏛 ВШЭ")
         dp.message.register(handle_msu, F.text == "🏫 МГУ")
         dp.message.register(handle_back, F.text == "🔙 Назад")
+
+        # Обработчики для кнопок ВШЭ
+        dp.message.register(process_hse_program, F.text.in_(["📊 Экономика", "📘 Совбак", "🔄 Обновить"]))
+        
+        # Обработчики для кнопок МГУ
+        dp.message.register(check_msu_lists, F.text == "🔍 Проверить сейчас")
+        dp.message.register(subscribe_msu_notifications, F.text == "🔔 Подписаться")
+        dp.message.register(unsubscribe_msu_notifications, F.text == "🔕 Отписаться")
+
         
         # Регистрация обработчиков callback-запросов
         dp.callback_query.register(back_to_main_menu, F.data == "back_to_main")
