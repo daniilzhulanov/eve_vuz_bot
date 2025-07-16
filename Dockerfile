@@ -20,7 +20,7 @@ COPY requirements.txt .
 # Устанавливаем Python-зависимости
 RUN pip install --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt && \
-    pip install openpyxl==3.1.2 --force-reinstall  # Явная установка
+    pip install openpyxl==3.1.2 beautifulsoup4 --force-reinstall
 
 COPY . .
 
