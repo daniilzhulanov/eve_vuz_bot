@@ -52,7 +52,7 @@ MSU_SETTINGS = {
     "url": "https://cpk.msu.ru/exams/",
     "target_title_part": "Математика ДВИ (четвертый поток) 18 Июля 2025 г.",
     "target_surname": "МИЛАЕВА",
-    "check_interval": 300,
+    "check_interval": 3000,
     "notification_users": set()
 }
 
@@ -403,13 +403,28 @@ async def main():
         dp.message.register(handle_msu, F.text == "🏫 МГУ")
         dp.message.register(handle_back, F.text == "🔙 Назад")
         
-        # Здесь регистрируем остальные обработчики для ВШЭ и МГУ
+        asyncio.create_task(start_msu_monitoring(bot))
+        
+        # Регистрация обработчиков
+        dp.message.register(start, F.text == "/start")
+        dp.callback_query.register(back_to_main_menu, F.data == "back_to_main")
+        dp.callback_query.register(show_hse_menu, F.data == "hse_menu")
+        dp.callback_query.register(show_msu_menu, F.data == "msu_menu")
+        dp.callback_query.register(process_hse_program, F.data.startswith("hse") | F.data.startswith("resh") | F.data.startswith("refresh_"))
+        dp.callback_query.register(check_msu_lists, F.data == "check_msu")
+        dp.callback_query.register(subscribe_msu_notifications, F.data == "subscribe_msu")
+        dp.callback_query.register(unsubscribe_msu_notifications, F.data == "unsubscribe_msu")
         
         await dp.start_polling(bot)
+    except asyncio.CancelledError:
+        logger.info("Bot stopped by cancellation")
     except Exception as e:
         logger.error(f"Bot crashed: {e}")
+        raise
     finally:
-        await bot.session.close()
+        if 'bot' in locals():
+            await bot.session.close()
+        logger.info("Bot fully stopped")
 
 if __name__ == "__main__":
     asyncio.run(main())
