@@ -439,19 +439,7 @@ async def main():
         dp.message.register(subscribe_msu_notifications, F.text == "🔔 Подписаться")
         dp.message.register(unsubscribe_msu_notifications, F.text == "🔕 Отписаться")
 
-        
-        # Регистрация обработчиков callback-запросов
-        dp.callback_query.register(back_to_main_menu, F.data == "back_to_main")
-        dp.callback_query.register(show_hse_menu, F.data == "hse_menu")
-        dp.callback_query.register(show_msu_menu, F.data == "msu_menu")
-        dp.callback_query.register(process_hse_program, 
-                                 F.data.startswith("hse") | 
-                                 F.data.startswith("resh") | 
-                                 F.data.startswith("refresh_"))
-        dp.callback_query.register(check_msu_lists, F.data == "check_msu")
-        dp.callback_query.register(subscribe_msu_notifications, F.data == "subscribe_msu")
-        dp.callback_query.register(unsubscribe_msu_notifications, F.data == "unsubscribe_msu")
-        
+    
         asyncio.create_task(start_msu_monitoring(bot))
         
         await dp.start_polling(bot)
