@@ -2,7 +2,7 @@ import pandas as pd
 import requests
 from io import BytesIO
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.enums import ParseMode
 import asyncio
 import os
@@ -34,13 +34,13 @@ if not TOKEN:
 # Словарь программ ВШЭ
 HSE_PROGRAMS = {
     "hse": {
-        "name": "📊 Экономика",
+        "name": "Экономика",
         "url": "https://enrol.hse.ru/storage/public_report_2025/moscow/Bachelors/BD_moscow_Economy_O.xlsx",
         "priority": 1,
         "places": 10
     },
     "resh": {
-        "name": "📘 Совбак НИУ ВШЭ и РЭШ",
+        "name": "Совбак НИУ ВШЭ и РЭШ",
         "url": "https://enrol.hse.ru/storage/public_report_2025/moscow/Bachelors/BD_moscow_RESH_O.xlsx",
         "priority": 2,
         "places": 6
@@ -50,75 +50,68 @@ HSE_PROGRAMS = {
 # Настройки для МГУ
 MSU_SETTINGS = {
     "url": "https://cpk.msu.ru/exams/",
-    "target_title_part": "Математика ДВИ (третий поток) 18 Июля 2025 г.",
-    "target_surname": "АБАЙХАНОВ",
-    "check_interval": 30,  # интервал проверки в секундах (5 минут)
-    "notification_users": set()  # множество пользователей, подписавшихся на уведомления
+    "target_title_part": "Математика ДВИ (четвертый поток) 18 Июля 2025 г.",
+    "target_surname": "МИЛАЕВА",
+    "check_interval": 300,
+    "notification_users": set()
 }
 
-# Вспомогательные функции
-def log_user_action(user_id: int, action: str):
-    """Логирование действий пользователя"""
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    logger.info(f"User ID: {user_id} - Action: {action} - Time: {timestamp}")
-
-def add_fixed_buttons(keyboard: InlineKeyboardMarkup):
-    """Добавляет фиксированные кнопки МГУ и ВШЭ внизу"""
-    keyboard.inline_keyboard.append([
-        InlineKeyboardButton(text="🏛 ВШЭ", callback_data="hse_menu"),
-        InlineKeyboardButton(text="🏫 МГУ", callback_data="msu_menu")
-    ])
-    return keyboard
-
+# Закрепленные клавиатуры
 def get_main_keyboard():
-    """Главное меню с фиксированными кнопками"""
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[])
-    return add_fixed_buttons(keyboard)
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="🏛 ВШЭ"), KeyboardButton(text="🏫 МГУ")]
+        ],
+        resize_keyboard=True,
+        persistent=True
+    )
 
-def get_hse_program_keyboard(include_refresh=False, current_program=None):
-    """Клавиатура для выбора программы ВШЭ"""
-    buttons = [
-        [InlineKeyboardButton(text=HSE_PROGRAMS["hse"]["name"], callback_data="hse")],
-        [InlineKeyboardButton(text=HSE_PROGRAMS["resh"]["name"], callback_data="resh")]
-    ]
-    
-    if include_refresh and current_program in HSE_PROGRAMS:
-        buttons.append([InlineKeyboardButton(text="🔄 Обновить данные", callback_data=f"refresh_{current_program}")])
-    
-    buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")])
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
-    return add_fixed_buttons(keyboard)
+def get_hse_keyboard():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📊 Экономика"), KeyboardButton(text="📘 Совбак")],
+            [KeyboardButton(text="🔄 Обновить"), KeyboardButton(text="🔙 Назад")]
+        ],
+        resize_keyboard=True,
+        persistent=True
+    )
 
 def get_msu_keyboard():
-    """Клавиатура для МГУ"""
-    buttons = [
-        [InlineKeyboardButton(text="🔍 Проверить сейчас", callback_data="check_msu")],
-        [InlineKeyboardButton(text="🔔 Подписаться на уведомление", callback_data="subscribe_msu")],
-        [InlineKeyboardButton(text="🔕 Отписаться от уведомлений", callback_data="unsubscribe_msu")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
-    ]
-    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
-    return add_fixed_buttons(keyboard)
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="🔍 Проверить сейчас")],
+            [KeyboardButton(text="🔔 Подписаться"), KeyboardButton(text="🔕 Отписаться")],
+            [KeyboardButton(text="🔙 Назад")]
+        ],
+        resize_keyboard=True,
+        persistent=True
+    )
 
 # Обработчики команд
 async def start(message: types.Message):
     log_user_action(message.from_user.id, "Started bot")
-    await message.answer("Выберите действие:", reply_markup=get_main_keyboard())
+    await message.answer(
+        "Выберите университет:",
+        reply_markup=get_main_keyboard()
+    )
 
-async def back_to_main_menu(callback: types.CallbackQuery):
-    await callback.message.edit_text("Выберите действие:", reply_markup=get_main_keyboard())
-    await callback.answer()
+async def handle_hse(message: types.Message):
+    await message.answer(
+        "Выберите программу ВШЭ:",
+        reply_markup=get_hse_keyboard()
+    )
 
-async def show_hse_menu(callback: types.CallbackQuery):
-    await callback.message.edit_text("Выберите программу ВШЭ для анализа рейтинга:", 
-                                   reply_markup=get_hse_program_keyboard())
-    await callback.answer()
+async def handle_msu(message: types.Message):
+    await message.answer(
+        "Действия со списками МГУ:",
+        reply_markup=get_msu_keyboard()
+    )
 
-async def show_msu_menu(callback: types.CallbackQuery):
-    await callback.message.edit_text("Проверка списков МГУ:", 
-                                   reply_markup=get_msu_keyboard())
-    await callback.answer()
+async def handle_back(message: types.Message):
+    await message.answer(
+        "Возвращаемся в главное меню:",
+        reply_markup=get_main_keyboard()
+    )
 
 async def process_hse_program(callback: types.CallbackQuery):
     user_id = callback.from_user.id
@@ -404,29 +397,19 @@ async def main():
         bot = Bot(token=TOKEN)
         dp = Dispatcher()
         
-        # Запускаем фоновую задачу мониторинга МГУ
-        asyncio.create_task(start_msu_monitoring(bot))
-        
-        # Регистрация обработчиков
+        # Регистрация обработчиков сообщений
         dp.message.register(start, F.text == "/start")
-        dp.callback_query.register(back_to_main_menu, F.data == "back_to_main")
-        dp.callback_query.register(show_hse_menu, F.data == "hse_menu")
-        dp.callback_query.register(show_msu_menu, F.data == "msu_menu")
-        dp.callback_query.register(process_hse_program, F.data.startswith("hse") | F.data.startswith("resh") | F.data.startswith("refresh_"))
-        dp.callback_query.register(check_msu_lists, F.data == "check_msu")
-        dp.callback_query.register(subscribe_msu_notifications, F.data == "subscribe_msu")
-        dp.callback_query.register(unsubscribe_msu_notifications, F.data == "unsubscribe_msu")
+        dp.message.register(handle_hse, F.text == "🏛 ВШЭ")
+        dp.message.register(handle_msu, F.text == "🏫 МГУ")
+        dp.message.register(handle_back, F.text == "🔙 Назад")
+        
+        # Здесь регистрируем остальные обработчики для ВШЭ и МГУ
         
         await dp.start_polling(bot)
-    except asyncio.CancelledError:
-        logger.info("Bot stopped by cancellation")
     except Exception as e:
         logger.error(f"Bot crashed: {e}")
-        raise
     finally:
-        if 'bot' in locals():
-            await bot.session.close()
-        logger.info("Bot fully stopped")
+        await bot.session.close()
 
 if __name__ == "__main__":
     asyncio.run(main())
