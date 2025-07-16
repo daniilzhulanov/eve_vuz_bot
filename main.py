@@ -396,6 +396,29 @@ async def start_msu_monitoring(bot: Bot):
             logger.error(f"Ошибка в мониторинге МГУ: {e}")
             await asyncio.sleep(60)  # ждем минуту при ошибке
 
+# ... (предыдущий код остается без изменений до функции main)
+
+async def back_to_main_menu(callback: types.CallbackQuery):
+    await callback.message.edit_text(
+        "Возвращаемся в главное меню:",
+        reply_markup=get_main_keyboard()
+    )
+    await callback.answer()
+
+async def show_hse_menu(callback: types.CallbackQuery):
+    await callback.message.edit_text(
+        "Выберите программу ВШЭ:",
+        reply_markup=get_hse_keyboard()
+    )
+    await callback.answer()
+
+async def show_msu_menu(callback: types.CallbackQuery):
+    await callback.message.edit_text(
+        "Действия со списками МГУ:",
+        reply_markup=get_msu_keyboard()
+    )
+    await callback.answer()
+
 async def main():
     try:
         logger.info("Starting bot...")
@@ -408,17 +431,19 @@ async def main():
         dp.message.register(handle_msu, F.text == "🏫 МГУ")
         dp.message.register(handle_back, F.text == "🔙 Назад")
         
-        asyncio.create_task(start_msu_monitoring(bot))
-        
-        # Регистрация обработчиков
-        dp.message.register(start, F.text == "/start")
+        # Регистрация обработчиков callback-запросов
         dp.callback_query.register(back_to_main_menu, F.data == "back_to_main")
         dp.callback_query.register(show_hse_menu, F.data == "hse_menu")
         dp.callback_query.register(show_msu_menu, F.data == "msu_menu")
-        dp.callback_query.register(process_hse_program, F.data.startswith("hse") | F.data.startswith("resh") | F.data.startswith("refresh_"))
+        dp.callback_query.register(process_hse_program, 
+                                 F.data.startswith("hse") | 
+                                 F.data.startswith("resh") | 
+                                 F.data.startswith("refresh_"))
         dp.callback_query.register(check_msu_lists, F.data == "check_msu")
         dp.callback_query.register(subscribe_msu_notifications, F.data == "subscribe_msu")
         dp.callback_query.register(unsubscribe_msu_notifications, F.data == "unsubscribe_msu")
+        
+        asyncio.create_task(start_msu_monitoring(bot))
         
         await dp.start_polling(bot)
     except asyncio.CancelledError:
