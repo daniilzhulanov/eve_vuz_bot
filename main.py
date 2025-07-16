@@ -50,9 +50,9 @@ HSE_PROGRAMS = {
 # Настройки для МГУ
 MSU_SETTINGS = {
     "url": "https://cpk.msu.ru/exams/",
-    "target_title_part": "Математика ДВИ (четвертый поток) 18 Июля 2025 г.",
-    "target_surname": "МИЛАЕВА",
-    "check_interval": 300,  # интервал проверки в секундах (5 минут)
+    "target_title_part": "Математика ДВИ (третий поток) 18 Июля 2025 г.",
+    "target_surname": "АБАЙХАНОВ",
+    "check_interval": 30,  # интервал проверки в секундах (5 минут)
     "notification_users": set()  # множество пользователей, подписавшихся на уведомления
 }
 
