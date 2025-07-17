@@ -8,8 +8,6 @@ import os
 import logging
 import aiohttp
 import nest_asyncio
-from bs4 import BeautifulSoup
-from aiogram.exceptions import TelegramRetryAfter
 
 # Настройка окружения
 nest_asyncio.apply()
@@ -24,9 +22,6 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
-
-def log_user_action(user_id: int, action: str):
-    logger.info(f"User {user_id}: {action}")
 
 TOKEN = os.environ.get("TOKEN")
 if not TOKEN:
@@ -48,62 +43,19 @@ HSE_PROGRAMS = {
     }
 }
 
-# Настройки СПбГУ
-SPBU_SETTINGS = {
-    "base_url": "https://enrollelists.spbu.ru",
-    "search_url": "https://enrollelists.spbu.ru/view-filters",
-    "params": {
-        "trajectory": "Поступаю как гражданин РФ",
-        "scenario": "Приём поступающих на программы бакалавриата и программы специалитета",
-        "group": "38.03.01 Экономика; Экономический факультет; Академический бакалавриат; Бюджетная основа; Отдельная квота; Экономика"
-    },
-    "target_id": "4272684"
-}
-
-# Настройки МГУ
-MSU_SETTINGS = {
-    "url": "https://cpk.msu.ru/exams/",
-    "target_title_part": "Математика ДВИ (четвертый поток) 18 Июля 2025 г.",
-    "target_surname": "МИЛАЕВА",
-    "check_interval": 300,
-    "notification_users": set()
-}
-
-# Клавиатуры
+# Закрепленные клавиатуры
 def get_main_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="🏛 ВШЭ"), KeyboardButton(text="🏫 МГУ"), KeyboardButton(text="🏰 СПбГУ")]
+            [KeyboardButton(text="📊 Экономика"), KeyboardButton(text="📘 Совбак")]
         ],
         resize_keyboard=True,
         persistent=True
     )
 
-def get_hse_keyboard():
+def get_back_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="📊 Экономика"), KeyboardButton(text="📘 Совбак")],
-            [KeyboardButton(text="🔙 Назад")]
-        ],
-        resize_keyboard=True,
-        persistent=True
-    )
-
-def get_msu_keyboard():
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="🔍 Проверить сейчас")],
-            [KeyboardButton(text="🔔 Подписаться"), KeyboardButton(text="🔕 Отписаться")],
-            [KeyboardButton(text="🔙 Назад")]
-        ],
-        resize_keyboard=True,
-        persistent=True
-    )
-
-def get_spbu_keyboard():
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="📈 Экономика СПбГУ")],
             [KeyboardButton(text="🔙 Назад")]
         ],
         resize_keyboard=True,
@@ -112,37 +64,18 @@ def get_spbu_keyboard():
 
 # Обработчики команд
 async def start(message: types.Message):
-    log_user_action(message.from_user.id, "Started bot")
-    await message.answer(
-        "Выберите университет:",
-        reply_markup=get_main_keyboard()
-    )
-
-async def handle_hse(message: types.Message):
     await message.answer(
         "Выберите программу ВШЭ:",
-        reply_markup=get_hse_keyboard()
-    )
-
-async def handle_msu(message: types.Message):
-    await message.answer(
-        "Действия со списками МГУ:",
-        reply_markup=get_msu_keyboard()
-    )
-
-async def handle_spbu(message: types.Message):
-    await message.answer(
-        "Выберите программу СПбГУ:",
-        reply_markup=get_spbu_keyboard()
+        reply_markup=get_main_keyboard()
     )
 
 async def handle_back(message: types.Message):
     await message.answer(
-        "Возвращаемся в главное меню:",
+        "Выберите программу ВШЭ:",
         reply_markup=get_main_keyboard()
     )
 
-# Обработчики ВШЭ
+# Обработчик программ ВШЭ
 async def process_hse_program(message: types.Message):
     user_id = message.from_user.id
     key = None
@@ -159,8 +92,8 @@ async def process_hse_program(message: types.Message):
     program = HSE_PROGRAMS[key]
     
     try:
-        log_user_action(user_id, f"Selected program: {program['name']}")
-        msg = await message.answer(f"🔄 Загружаю данные: *{program['name']}*", parse_mode=ParseMode.MARKDOWN)
+        logger.info(f"User {user_id} selected: {program['name']}")
+        msg = await message.answer(f"🔄 Загружаю данные: {program['name']}", reply_markup=get_back_keyboard())
 
         async with aiohttp.ClientSession() as session:
             async with session.get(program['url'], timeout=10) as response:
@@ -177,297 +110,47 @@ async def process_hse_program(message: types.Message):
         
         target_priority = program["priority"]
         places = program["places"]
-        result_msg = f"📅 Дата обновления данных: {report_datetime}\n\n🎯 Мест на программе: {places}\n\n"
+        result_msg = f"📅 Дата обновления: {report_datetime}\n🎯 Мест: {places}\n\n"
         
-        if target_priority == 1:
-            filtered_1 = df[
-                (df[9].astype(str).str.strip().str.upper() == "ДА") & 
-                (df[11].astype(str).str.strip() == "1")
-            ].copy()
+        # Фильтрация по приоритету
+        filtered = df[
+            (df[9].astype(str).str.strip().str.upper() == "ДА") & 
+            (df[11].astype(str).str.strip() == str(target_priority))
+        ].copy()
 
-            if filtered_1.empty:
-                await message.answer("⚠️ Нет абитуриентов с 1 приоритетом.")
-                return
+        if filtered.empty:
+            await message.answer(f"⚠️ Нет абитуриентов с {target_priority} приоритетом")
+            return
 
-            filtered_1 = filtered_1.sort_values(by=18, ascending=False)
-            filtered_1['rank'] = range(1, len(filtered_1) + 1)
+        filtered = filtered.sort_values(by=18, ascending=False)
+        filtered['rank'] = range(1, len(filtered) + 1)
 
-            applicant = filtered_1[filtered_1[1].astype(str).str.strip() == "4272684"]  
-            if applicant.empty:
-                await message.answer("🚫 Номер 4272684 не найден среди 1 приоритета.")
-                return
+        # Поиск абитуриента
+        applicant = filtered[filtered[1].astype(str).str.strip() == "4272684"]  
+        if applicant.empty:
+            await message.answer(f"🚫 Номер 4272684 не найден среди {target_priority} приоритета")
+            return
 
-            rank = applicant['rank'].values[0]
-            score = applicant[18].values[0]
+        rank = applicant['rank'].values[0]
+        score = applicant[18].values[0]
+        result_msg += f"✅ Ваш рейтинг: {rank}\n🔢 Ваш балл: {score}"
 
-            result_msg += f"✅ Твой рейтинг среди 1 приоритета: {rank}"
+        # Сравнение с другим приоритетом
+        other_priority = 2 if target_priority == 1 else 1
+        other_df = df[
+            (df[9].astype(str).str.strip().str.upper() == "ДА") & 
+            (df[11].astype(str).str.strip() == str(other_priority))
+        ]
 
-            filtered_2 = df[
-                (df[9].astype(str).str.strip().str.upper() == "ДА") & 
-                (df[11].astype(str).str.strip() == "2")
-            ].copy()
-
-            if not filtered_2.empty:
-                higher_2_than_her = filtered_2[filtered_2[18] > score]
-                count_higher_2 = len(higher_2_than_her)
-                result_msg += f"\n\n🔺 Людей со 2 приоритетом и баллом выше: {count_higher_2}"
-            else:
-                result_msg += "\n\n🔺 Людей со 2 приоритетом и баллом выше: 0"
-
-        else:
-            filtered_2 = df[
-                (df[9].astype(str).str.strip().str.upper() == "ДА") &  
-                (df[11].astype(str).str.strip() == "2")
-            ].copy()
-
-            if filtered_2.empty:
-                await message.answer("⚠️ Нет абитуриентов со 2 приоритетом.")
-                return
-
-            filtered_2 = filtered_2.sort_values(by=18, ascending=False)
-            filtered_2['rank_2'] = range(1, len(filtered_2) + 1)
-
-            applicant = filtered_2[filtered_2[1].astype(str).str.strip() == "4272684"]  
-            if applicant.empty:
-                await message.answer("🚫 Номер 4272684 не найден среди 2 приоритета.")
-                return
-
-            rank_2 = applicant['rank_2'].values[0]
-            score = applicant[18].values[0]
-
-            result_msg += f"✅ Твой рейтинг среди 2 приоритета: {rank_2}"
-
-            filtered_1 = df[
-                (df[9].astype(str).str.strip().str.upper() == "ДА") & 
-                (df[11].astype(str).str.strip() == "1")
-            ].copy()
-
-            if not filtered_1.empty:
-                higher_1_than_her = filtered_1[filtered_1[18] > score]
-                count_higher_1 = len(higher_1_than_her)
-                result_msg += f"\n\n🔺 Людей с 1 приоритетом и баллом выше: {count_higher_1}"
-            else:
-                result_msg += "\n\n🔺 Людей с 1 приоритетом и баллом выше: 0"
+        if not other_df.empty:
+            higher_others = len(other_df[other_df[18] > score])
+            result_msg += f"\n\n🔺 Абитуриентов с {other_priority} приоритетом и баллом выше: {higher_others}"
 
         await message.answer(result_msg)
 
     except Exception as e:
-        logger.error(f"Error in process_hse_program: {e}")
-        await message.answer(f"❌ Ошибка при обработке данных: {str(e)[:200]}")
-
-# Обработчики СПбГУ
-async def parse_spbu_economics(message: types.Message):
-    try:
-        await message.answer("🔄 Загружаю данные по СПбГУ (Экономика)...")
-        
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'ru-RU,ru;q=0.8,en-US;q=0.5,en;q=0.3',
-        }
-
-        async with aiohttp.ClientSession(headers=headers) as session:
-            # Первый запрос для получения cookies и CSRF
-            async with session.get(SPBU_SETTINGS['search_url']) as resp:
-                if resp.status != 200:
-                    await message.answer("❌ Ошибка доступа к сайту СПбГУ")
-                    return
-
-                html = await resp.text()
-                soup = BeautifulSoup(html, 'html.parser')
-                
-                # Альтернативные способы поиска CSRF-токена
-                csrf_token = None
-                meta_token = soup.find('meta', {'name': 'csrf-token'})
-                if meta_token:
-                    csrf_token = meta_token.get('content')
-                else:
-                    script_content = soup.find('script', string=lambda t: t and 'csrfToken' in t)
-                    if script_content:
-                        import re
-                        match = re.search(r'csrfToken\s*:\s*[\'"]([^\'"]+)[\'"]', str(script_content))
-                        if match:
-                            csrf_token = match.group(1)
-                
-                if not csrf_token:
-                    await message.answer("❌ Не удалось найти CSRF-токен. Возможно, изменилась структура сайта.")
-                    return
-
-            # Подготовка данных для AJAX-запроса
-            form_data = {
-                '_csrf': csrf_token,
-                'TrajectoryFilter[trajectory]': SPBU_SETTINGS['params']['trajectory'],
-                'ScenarioFilter[scenario]': SPBU_SETTINGS['params']['scenario'],
-                'CompetitiveGroupFilter[group]': SPBU_SETTINGS['params']['group'],
-                'ajax': 'view-filters-form'
-            }
-
-            # Отправка AJAX-запроса
-            async with session.post(
-                SPBU_SETTINGS['search_url'],
-                data=form_data,
-                headers={
-                    'X-Requested-With': 'XMLHttpRequest',
-                    'X-CSRF-Token': csrf_token,
-                    'Referer': SPBU_SETTINGS['search_url'],
-                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
-                }
-            ) as resp:
-                if resp.status != 200:
-                    await message.answer(f"❌ Ошибка сервера: {resp.status}")
-                    return
-
-                try:
-                    data = await resp.json()
-                except Exception as e:
-                    await message.answer("❌ Не удалось обработать ответ сервера")
-                    return
-
-                if not data.get('success'):
-                    error_msg = data.get('message', 'Неизвестная ошибка сервера')
-                    await message.answer(f"❌ Ошибка сервера: {error_msg}")
-                    return
-
-                # Парсинг результатов
-                html = data.get('content', '')
-                if not html:
-                    await message.answer("❌ Сервер не вернул данные")
-                    return
-
-                soup = BeautifulSoup(html, 'html.parser')
-                table = soup.find('table')
-                
-                if not table:
-                    await message.answer("❌ Не найдена таблица с результатами")
-                    return
-
-                # Обработка таблицы
-                applicants = []
-                for row in table.find_all('tr')[1:]:  # Пропускаем заголовок
-                    cols = row.find_all('td')
-                    if len(cols) >= 6:
-                        try:
-                            applicants.append({
-                                'id': cols[0].text.strip(),
-                                'name': cols[1].text.strip(),
-                                'priority': int(cols[3].text.strip()),
-                                'score': float(cols[4].text.strip()),
-                                'original': cols[5].text.strip().lower() == 'да'
-                            })
-                        except (ValueError, AttributeError):
-                            continue
-
-                if not applicants:
-                    await message.answer("❌ Нет данных об абитуриентах")
-                    return
-
-                # Фильтрация и анализ
-                priority_2 = [a for a in applicants if a['priority'] == 2 and a['original']]
-                if not priority_2:
-                    await message.answer("ℹ️ Нет абитуриентов с 2 приоритетом")
-                    return
-
-                priority_2_sorted = sorted(priority_2, key=lambda x: x['score'], reverse=True)
-                
-                # Поиск конкретного абитуриента
-                target_pos = next(
-                    (i+1 for i, a in enumerate(priority_2_sorted) 
-                    if a['id'] == SPBU_SETTINGS['target_id']), 
-                    None
-                )
-
-                if not target_pos:
-                    await message.answer("🚫 Ваш номер не найден в списке")
-                    return
-
-                target_score = next(
-                    a['score'] for a in priority_2_sorted 
-                    if a['id'] == SPBU_SETTINGS['target_id']
-                )
-
-                # Формирование отчета
-                higher = sum(1 for a in priority_2_sorted if a['score'] > target_score)
-                total = len(priority_2_sorted)
-                
-                report = (
-                    f"📊 СПбГУ Экономика (2 приоритет)\n\n"
-                    f"👤 Ваша позиция: {target_pos} из {total}\n"
-                    f"🎯 Ваш балл: {target_score}\n"
-                    f"🔝 Абитуриентов с более высокими баллами: {higher}\n"
-                    f"📌 Всего оригиналов: {total}"
-                )
-                
-                await message.answer(report)
-
-    except Exception as e:
-        logger.error(f"SPBU parse error: {str(e)}", exc_info=True)
-        await message.answer("❌ Произошла ошибка при обработке данных СПбГУ")
-
-# Обработчики МГУ
-async def check_msu_lists(message: types.Message):
-    user_id = message.from_user.id
-    await message.answer("Проверяю списки МГУ...")
-    
-    try:
-        found = await check_msu_page()
-        if found:
-            await message.answer("🎉 Страница с результатами появилась! Фамилия МИЛАЕВА найдена.")
-            MSU_SETTINGS["notification_users"].discard(user_id)
-        else:
-            await message.answer("ℹ️ Страница с результатами еще не появилась или фамилия не найдена.")
-    except Exception as e:
-        await message.answer(f"❌ Ошибка: {str(e)}")
-
-async def subscribe_msu_notifications(message: types.Message):
-    user_id = message.from_user.id
-    MSU_SETTINGS["notification_users"].add(user_id)
-    await message.answer("✅ Вы подписались на уведомления о списках МГУ")
-
-async def unsubscribe_msu_notifications(message: types.Message):
-    user_id = message.from_user.id
-    MSU_SETTINGS["notification_users"].discard(user_id)
-    await message.answer("🔕 Вы отписались от уведомлений о списках МГУ")
-
-async def check_msu_page():
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(MSU_SETTINGS["url"]) as response:
-                content = await response.text()
-        
-        soup = BeautifulSoup(content, 'html.parser')
-        exam_links = soup.find_all('a', href=True)
-        
-        for link in exam_links:
-            if MSU_SETTINGS["target_title_part"] in link.text:
-                found_page = link['href']
-                if not found_page.startswith('http'):
-                    found_page = MSU_SETTINGS["url"] + found_page.lstrip('/')
-                
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(found_page) as response:
-                        exam_content = await response.text()
-                        if MSU_SETTINGS["target_surname"] in exam_content:
-                            return True
-        return False
-    except Exception as e:
-        logger.error(f"Error checking MSU page: {e}")
-        return False
-
-async def start_msu_monitoring(bot: Bot):
-    while True:
-        try:
-            found = await check_msu_page()
-            if found and MSU_SETTINGS["notification_users"]:
-                for user_id in list(MSU_SETTINGS["notification_users"]):
-                    try:
-                        await bot.send_message(user_id, "🚨 Появились списки МГУ! Фамилия МИЛАЕВА найдена.")
-                        MSU_SETTINGS["notification_users"].remove(user_id)
-                    except Exception as e:
-                        logger.error(f"Error sending notification: {e}")
-            await asyncio.sleep(MSU_SETTINGS["check_interval"])
-        except Exception as e:
-            logger.error(f"Monitoring error: {e}")
-            await asyncio.sleep(60)
+        logger.error(f"Error: {str(e)}")
+        await message.answer(f"❌ Ошибка: {str(e)[:200]}")
 
 # Основная функция
 async def main():
@@ -477,17 +160,9 @@ async def main():
         
         # Регистрация обработчиков
         dp.message.register(start, F.text == "/start")
-        dp.message.register(handle_hse, F.text == "🏛 ВШЭ")
-        dp.message.register(handle_msu, F.text == "🏫 МГУ")
-        dp.message.register(handle_spbu, F.text == "🏰 СПбГУ")
         dp.message.register(handle_back, F.text == "🔙 Назад")
         dp.message.register(process_hse_program, F.text.in_(["📊 Экономика", "📘 Совбак"]))
-        dp.message.register(parse_spbu_economics, F.text == "📈 Экономика СПбГУ")
-        dp.message.register(check_msu_lists, F.text == "🔍 Проверить сейчас")
-        dp.message.register(subscribe_msu_notifications, F.text == "🔔 Подписаться")
-        dp.message.register(unsubscribe_msu_notifications, F.text == "🔕 Отписаться")
         
-        asyncio.create_task(start_msu_monitoring(bot))
         await dp.start_polling(bot)
     except Exception as e:
         logger.error(f"Bot crashed: {e}")
