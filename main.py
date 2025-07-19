@@ -11,10 +11,8 @@ from datetime import datetime
 import aiohttp
 import nest_asyncio
 
-
 # Применяем исправление для работы с event loop
 nest_asyncio.apply()
-
 
 # Настройка логирования
 logging.basicConfig(
@@ -48,7 +46,6 @@ PROGRAMS = {
     }
 }
 
-
 # Вспомогательные функции должны быть определены перед их использованием
 def log_user_action(user_id: int, action: str):
     """Логирование действий пользователя"""
@@ -76,7 +73,6 @@ async def start(message: types.Message):
 async def process_program(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     
-    # Обработка кнопки обновления
     if callback.data.startswith("refresh_"):
         key = callback.data.split("_")[1]
         await callback.answer("Обновляю данные...")
@@ -122,7 +118,7 @@ async def process_program(callback: types.CallbackQuery):
             target_priority = program["priority"]
             places = program["places"]
             
-            # Фильтрация по согласию ("ДА") и приоритету
+            # Фильтрация по согласию ("ДА") и приоритету (столбец 12 - индекс 11)
             filtered = df[
                 (df[9].astype(str).str.strip().str.upper() == "ДА") & 
                 (df[11].astype(str).str.strip() == str(target_priority))
@@ -134,11 +130,11 @@ async def process_program(callback: types.CallbackQuery):
                                            reply_markup=get_program_keyboard(include_refresh=True, current_program=key))
                 return
         
-            # Сортируем по баллам (по убыванию) и добавляем ранги
+            # Сортируем по баллам (столбец 19 - индекс 18) по убыванию и добавляем ранги
             filtered = filtered.sort_values(by=18, ascending=False)
             filtered['rank'] = range(1, len(filtered) + 1)
         
-            # Ищем абитуриента с ID 4272684
+            # Ищем абитуриента с ID 4272684 (столбец 2 - индекс 1)
             applicant = filtered[filtered[1].astype(str).str.strip() == "4272684"]  
             if applicant.empty:
                 log_user_action(user_id, "Applicant 4272684 not found")
