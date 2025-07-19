@@ -55,8 +55,8 @@ def process_data(df: pd.DataFrame, program_code: str):
     
     # Данные для текущего приоритета
     priority_df = df[has_consent & (df[priority_col] == current_priority)].copy()
-    priority_df.sort_values(by=score_col, ascending=False, inplace=True)
-    priority_df['rank'] = range(1, len(priority_df) + 1
+    priority_df['rank'] = priority_df[score_col].rank(ascending=False, method='min').astype(int)
+    priority_df.sort_values(by='rank', inplace=True)
     
     # Поиск пользователя
     user_row = priority_df[priority_df[id_col] == USER_ID]
