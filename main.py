@@ -127,5 +127,11 @@ async def process_program(code):
         f"🔺 Людей с {alt_priority} приоритетом и баллом выше: {higher_alt}"
     )
 
+
+async def main():
+    logging.basicConfig(level=logging.INFO)
+    await dp.start_polling(bot)
+
 if __name__ == "__main__":
-    asyncio.run(dp.start_polling(bot))
+    import asyncio
+    asyncio.get_event_loop().run_until_complete(main())
