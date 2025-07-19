@@ -1,8 +1,9 @@
 import os
 import pandas as pd
 import requests
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
+from telegram import Update, KeyboardButton, ReplyKeyboardMarkup
+from telegram.ext import Updater, CommandHandler, MessageHandler, CallbackContext
+from telegram.ext import filters as Filters 
 
 # Конфигурация программ
 PROGRAMS = {
