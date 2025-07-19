@@ -26,43 +26,42 @@ PROGRAMS = {
     }
 }
 
-# ID пользователя (замените на актуальный)
-USER_ID = 4272684
+USER_ID = 4272684  # Замените на ваш ID
 
 def get_excel_data(url):
     """Загрузка и парсинг Excel файла"""
     response = requests.get(url)
-    return pd.read_excel(io.BytesIO(response.content), datetime.now()
+    return pd.read_excel(io.BytesIO(response.content)), datetime.now()
 
 def analyze_program_data(df, program_key):
     """Анализ данных для конкретной программы"""
     program = PROGRAMS[program_key]
     
     # Фильтрация данных
-    df = df[df[10] == "Да"]  # Столбец 10 - "Да"
-    df = df[df[12] == program["priority"]]  # Столбец 12 - приоритет
+    df = df[df.iloc[:, 10] == "Да"]  # Столбец 10
+    df = df[df.iloc[:, 12] == program["priority"]]  # Столбец 12
     
     # Находим пользователя
-    user_row = df[df[2] == USER_ID]
+    user_row = df[df.iloc[:, 2] == USER_ID]  # Столбец 2
     
     if user_row.empty:
         return None
     
-    user_score = user_row.iloc[0][19]  # Столбец 19 - балл
+    user_score = user_row.iloc[0, 19]  # Столбец 19
     
     # Рейтинг среди приоритета
-    priority_df = df[df[12] == program["priority"]].copy()
-    priority_df['rank'] = priority_df[19].rank(ascending=False, method='min')
-    user_priority_rank = int(priority_df[priority_df[2] == USER_ID]['rank'].iloc[0])
+    priority_df = df[df.iloc[:, 12] == program["priority"]].copy()
+    priority_df['rank'] = priority_df.iloc[:, 19].rank(ascending=False, method='min')
+    user_priority_rank = int(priority_df[priority_df.iloc[:, 2] == USER_ID]['rank'].iloc[0])
     
-    # Количество людей с другим приоритетом и баллом выше
+    # Людей с другим приоритетом и баллом выше
     other_priority = 2 if program["priority"] == 1 else 1
-    higher_priority_above = len(df[(df[12] == other_priority) & (df[19] > user_score)])
+    higher_priority_above = len(df[(df.iloc[:, 12] == other_priority) & (df.iloc[:, 19] > user_score)])
     
     return {
         "user_priority_rank": user_priority_rank,
         "higher_priority_above": higher_priority_above,
-        "is_accepted": True  # Предполагаем, что если есть в списке, то принят
+        "is_accepted": True
     }
 
 def start(update, context):
@@ -79,7 +78,6 @@ def handle_program_selection(update, context):
     program_name = update.message.text
     program_key = None
     
-    # Определяем ключ программы по имени
     for key, data in PROGRAMS.items():
         if data["name"] == program_name:
             program_key = key
@@ -90,7 +88,6 @@ def handle_program_selection(update, context):
         return
     
     try:
-        # Загружаем и анализируем данные
         df, update_time = get_excel_data(PROGRAMS[program_key]["url"])
         analysis = analyze_program_data(df, program_key)
         
@@ -98,7 +95,6 @@ def handle_program_selection(update, context):
             update.message.reply_text("Ваши данные не найдены в списках")
             return
         
-        # Формируем сообщение
         message = (
             f"📅 Дата обновления данных: {update_time.strftime('%d.%m.%Y %H:%M:%S')}\n\n"
             f"🎯 Мест на программе: {PROGRAMS[program_key]['places']}\n\n"
@@ -113,15 +109,14 @@ def handle_program_selection(update, context):
         update.message.reply_text("Произошла ошибка при обработке данных. Попробуйте позже.")
 
 def error(update, context):
-    """Логирование ошибок"""
     logger.warning(f'Update "{update}" caused error "{context.error}"')
 
 def main():
-    """Запуск бота"""
+
     TOKEN = os.environ.get("TOKEN")
     if not TOKEN:
         raise ValueError("Токен не найден. Установите переменную окружения TOKEN.")
-
+        
     updater = Updater("TOKEN", use_context=True)
     dp = updater.dispatcher
     
