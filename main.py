@@ -118,7 +118,7 @@ def main():
     if not TOKEN:
         raise ValueError("Токен не найден. Установите переменную окружения TOKEN.")
         
-    updater = Updater("TOKEN", use_context=True)
+    updater = Updater(TOKEN, use_context=True)
     dp = updater.dispatcher
     
     dp.add_handler(CommandHandler("start", start))
