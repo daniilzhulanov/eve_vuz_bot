@@ -1,28 +1,10 @@
 import os
-import logging
-from datetime import datetime
-import requests
 import pandas as pd
-from io import BytesIO
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+import requests
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 
-# Настройка логирования
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)
-
-# Получение токена из переменной окружения
-TOKEN = os.environ.get("TOKEN")
-if not TOKEN:
-    raise ValueError("Токен не найден. Установите переменную окружения TOKEN.")
-
-# ID пользователя для поиска
-USER_ID = "4272684"
-
-# Словарь программ
+# Конфигурация программ
 PROGRAMS = {
     "hse": {
         "name": "📊 Экономика",
@@ -38,163 +20,114 @@ PROGRAMS = {
     }
 }
 
-def download_excel_file(url):
-    """Загружает Excel файл по URL"""
-    try:
-        response = requests.get(url, timeout=30)
-        response.raise_for_status()
-        return BytesIO(response.content)
-    except requests.RequestException as e:
-        logger.error(f"Ошибка при загрузке файла {url}: {e}")
-        return None
+# ID пользователя для поиска
+USER_ID = 4272684
 
-def analyze_program_data(program_key):
-    """Анализирует данные программы и возвращает статистику"""
-    program = PROGRAMS[program_key]
-    
-    # Загружаем файл
-    excel_file = download_excel_file(program["url"])
-    if not excel_file:
-        return None
-    
+def download_excel(url: str):
+    """Скачивает и читает Excel-файл."""
+    response = requests.get(url)
+    response.raise_for_status()
+    return pd.read_excel(response.content, header=None, engine='openpyxl')
+
+def process_data(df: pd.DataFrame, program_code: str):
+    """Обрабатывает данные и возвращает статистику."""
     try:
-        # Читаем Excel файл
-        df = pd.read_excel(excel_file, engine='openpyxl')
-        
-        # Находим пользователя
-        # Столбец B (индекс 1) - номер человека
-        # Столбец J (индекс 9) - статус "Да"
-        # Столбец L (индекс 11) - приоритет
-        # Столбец S (индекс 18) - балл
-        
-        user_row = df[df.iloc[:, 1].astype(str) == USER_ID]
-        
-        if user_row.empty:
-            return {
-                "error": f"Пользователь {USER_ID} не найден в списках программы"
-            }
-        
-        user_data = user_row.iloc[0]
-        
-        # Проверяем, что в 10 столбце "Да"
-        if str(user_data.iloc[9]).strip().lower() != "да":
-            return {
-                "error": "Пользователь не соответствует критериям (10 столбец не содержит 'Да')"
-            }
-        
-        user_priority = int(user_data.iloc[11])  # приоритет пользователя
-        user_score = float(user_data.iloc[18])   # балл пользователя
-        
-        # Фильтруем данные: только те, у кого в 10 столбце "Да"
-        valid_candidates = df[df.iloc[:, 9].astype(str).str.strip().str.lower() == "да"].copy()
-        
-        # Считаем рейтинг среди своего приоритета
-        same_priority = valid_candidates[valid_candidates.iloc[:, 11] == user_priority]
-        same_priority_better = same_priority[same_priority.iloc[:, 18] > user_score]
-        rank_in_priority = len(same_priority_better) + 1
-        
-        # Считаем людей с другим приоритетом и баллом выше
-        if user_priority == 1:
-            other_priority = 2
+        # Извлечение даты обновления
+        report_datetime = df.iloc[4, 5]
+        if pd.isna(report_datetime):
+            report_datetime_str = "не указана"
+        elif pd.api.types.is_datetime64_any_dtype(report_datetime):
+            report_datetime_str = report_datetime.strftime("%d.%m.%Y %H:%M:%S")
         else:
-            other_priority = 1
+            report_datetime_str = str(report_datetime)
+    except:
+        report_datetime_str = "ошибка получения"
+
+    # Фильтрация данных
+    consent_col = 9  # Столбец с согласием (индекс 9)
+    priority_col = 11  # Столбец с приоритетом (индекс 11)
+    score_col = 18  # Столбец с баллами (индекс 18)
+    id_col = 1  # Столбец с ID (индекс 1)
+
+    # Основные фильтры
+    has_consent = (df[consent_col] == "Да")
+    current_priority = PROGRAMS[program_code]["priority"]
+    
+    # Данные для текущего приоритета
+    priority_df = df[has_consent & (df[priority_col] == current_priority)].copy()
+    priority_df.sort_values(by=score_col, ascending=False, inplace=True)
+    priority_df['rank'] = range(1, len(priority_df) + 1
+    
+    # Поиск пользователя
+    user_row = priority_df[priority_df[id_col] == USER_ID]
+    user_rank = user_row['rank'].values[0] if not user_row.empty else None
+    user_score = user_row[score_col].values[0] if not user_row.empty else None
+
+    # Конкуренты с другим приоритетом
+    other_priority = 2 if current_priority == 1 else 1
+    competitors = df[
+        has_consent & 
+        (df[priority_col] == other_priority) & 
+        (df[score_col] > user_score)
+    ]
+    
+    return {
+        "date": report_datetime_str,
+        "places": PROGRAMS[program_code]["places"],
+        "user_rank": user_rank,
+        "competitors_count": len(competitors)
+    }
+
+def get_program_info(program_code: str):
+    """Получает информацию о программе."""
+    try:
+        df = download_excel(PROGRAMS[program_code]["url"])
+        data = process_data(df, program_code)
+        
+        if data["user_rank"] is None:
+            return "❌ Ваши данные не найдены в списке"
             
-        other_priority_candidates = valid_candidates[valid_candidates.iloc[:, 11] == other_priority]
-        other_priority_better = other_priority_candidates[other_priority_candidates.iloc[:, 18] > user_score]
-        other_priority_count = len(other_priority_better)
-        
-        # Получаем текущую дату и время
-        update_time = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
-        
-        return {
-            "update_time": update_time,
-            "places": program["places"],
-            "user_priority": user_priority,
-            "rank_in_priority": rank_in_priority,
-            "other_priority_count": other_priority_count,
-            "other_priority": other_priority
-        }
-        
+        return (
+            f"📅 Дата обновления данных: {data['date']}\n\n"
+            f"🎯 Мест на программе: {data['places']}\n\n"
+            f"✅ Твой рейтинг среди {PROGRAMS[program_code]['priority']} приоритета: {data['user_rank']}\n\n"
+            f"🔺 Людей с {3 - PROGRAMS[program_code]['priority']} приоритетом и баллом выше: {data['competitors_count']}"
+        )
     except Exception as e:
-        logger.error(f"Ошибка при обработке данных: {e}")
-        return {"error": f"Ошибка при обработке данных: {str(e)}"}
+        return f"⚠️ Ошибка при обработке данных: {str(e)}"
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик команды /start"""
-    keyboard = [
-        [InlineKeyboardButton("📊 Экономика", callback_data='hse')],
-        [InlineKeyboardButton("📘 Совбак НИУ ВШЭ и РЭШ", callback_data='resh')]
+# Обработчики Telegram
+def start(update: Update, context: CallbackContext) -> None:
+    buttons = [
+        [KeyboardButton(PROGRAMS["hse"]["name"])],
+        [KeyboardButton(PROGRAMS["resh"]["name"])]
     ]
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await update.message.reply_text(
-        'Выберите программу для получения информации о поступлении:',
-        reply_markup=reply_markup
-    )
+    reply_markup = ReplyKeyboardMarkup(buttons, resize_keyboard=True)
+    update.message.reply_text("Выберите программу:", reply_markup=reply_markup)
 
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик нажатий на кнопки"""
-    query = update.callback_query
-    await query.answer()
-    
-    program_key = query.data
-    
-    if program_key not in PROGRAMS:
-        await query.edit_message_text("Неизвестная программа")
-        return
-    
-    program = PROGRAMS[program_key]
-    
-    # Показываем индикатор загрузки
-    await query.edit_message_text("🔄 Загружаю данные...")
-    
-    # Анализируем данные
-    result = analyze_program_data(program_key)
-    
-    if not result:
-        await query.edit_message_text("❌ Ошибка при загрузке данных. Попробуйте позже.")
-        return
-    
-    if "error" in result:
-        await query.edit_message_text(f"❌ {result['error']}")
-        return
-    
-    # Формируем сообщение с результатами
-    message = f"""📊 {program['name']}
+def handle_message(update: Update, context: CallbackContext) -> None:
+    text = update.message.text
+    if text == PROGRAMS["hse"]["name"]:
+        message = get_program_info("hse")
+    elif text == PROGRAMS["resh"]["name"]:
+        message = get_program_info("resh")
+    else:
+        message = "Используйте кнопки для выбора программы"
+    update.message.reply_text(message)
 
-📅 Дата обновления данных: {result['update_time']}
-🎯 Мест на программе: {result['places']}
-✅ Твой рейтинг среди {result['user_priority']} приоритета: {result['rank_in_priority']}
-🔺 Людей с {result['other_priority']} приоритетом и баллом выше: {result['other_priority_count']}"""
+def main() -> None:
+    TOKEN = os.environ.get("TOKEN")
+    if not TOKEN:
+        raise ValueError("Токен не найден. Установите переменную окружения TOKEN.")
     
-    # Добавляем кнопки для повторного выбора
-    keyboard = [
-        [InlineKeyboardButton("📊 Экономика", callback_data='hse')],
-        [InlineKeyboardButton("📘 Совбак НИУ ВШЭ и РЭШ", callback_data='resh')]
-    ]
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await query.edit_message_text(message, reply_markup=reply_markup)
+    updater = Updater(TOKEN)
+    dispatcher = updater.dispatcher
 
-async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик ошибок"""
-    logger.error(f"Ошибка: {context.error}")
+    dispatcher.add_handler(CommandHandler("start", start))
+    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
 
-def main():
-    """Главная функция запуска бота"""
-    # Создаем приложение
-    application = Application.builder().token(TOKEN).build()
-    
-    # Добавляем обработчики
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CallbackQueryHandler(button_handler))
-    application.add_error_handler(error_handler)
-    
-    # Запускаем бота
-    logger.info("Бот запущен")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    updater.start_polling()
+    updater.idle()
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
