@@ -1,17 +1,18 @@
 import pandas as pd
-import requests
 from io import BytesIO
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.enums import ParseMode
+from aiogram.filters import Command
 import asyncio
 import os
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 import aiohttp
 import nest_asyncio
+from collections import defaultdict
 
-# Применяем исправление для работы с event loop
+# Настройка event loop
 nest_asyncio.apply()
 
 # Настройка логирования
@@ -25,7 +26,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
+# Конфигурация
 TOKEN = os.environ.get("TOKEN")
 if not TOKEN:
     raise ValueError("Токен не найден. Установите переменную окружения TOKEN.")
@@ -36,24 +37,30 @@ PROGRAMS = {
         "name": "📊 Экономика",
         "url": "https://enrol.hse.ru/storage/public_report_2025/moscow/Bachelors/BD_moscow_Economy_O.xlsx",
         "priority": 1,
-        "places": 10
+        "places": 10,
+        "last_update": None,
+        "last_hash": None
     },
     "resh": {
         "name": "📘 Совбак НИУ ВШЭ и РЭШ",
         "url": "https://enrol.hse.ru/storage/public_report_2025/moscow/Bachelors/BD_moscow_RESH_O.xlsx",
         "priority": 2,
-        "places": 6
+        "places": 6,
+        "last_update": None,
+        "last_hash": None
     }
 }
 
-# Вспомогательные функции должны быть определены перед их использованием
+# Хранилище подписок
+subscriptions = defaultdict(dict)
+check_task = None
+
 def log_user_action(user_id: int, action: str):
     """Логирование действий пользователя"""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     logger.info(f"User ID: {user_id} - Action: {action} - Time: {timestamp}")
 
-
-def get_program_keyboard(include_refresh=False, current_program=None):
+def get_program_keyboard(include_refresh=False, include_subscribe=False, current_program=None):
     buttons = [
         [InlineKeyboardButton(text=PROGRAMS["hse"]["name"], callback_data="hse")],
         [InlineKeyboardButton(text=PROGRAMS["resh"]["name"], callback_data="resh")]
@@ -62,20 +69,127 @@ def get_program_keyboard(include_refresh=False, current_program=None):
     if include_refresh and current_program in PROGRAMS:
         buttons.append([InlineKeyboardButton(text="🔄 Обновить данные", callback_data=f"refresh_{current_program}")])
     
+    if include_subscribe and current_program in PROGRAMS:
+        user_id = None  # Будет установлено в обработчике
+        is_subscribed = subscriptions.get(user_id, {}).get(current_program, False)
+        text = "❌ Отписаться" if is_subscribed else "✅ Подписаться"
+        buttons.append([InlineKeyboardButton(text=text, callback_data=f"subscribe_{current_program}")])
+    
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
+async def download_data(url):
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as response:
+            response.raise_for_status()
+            return await response.read()
 
-# Обработчики команд
+async def process_data(program_key, user_id=None):
+    program = PROGRAMS[program_key]
+    try:
+        content = await download_data(program["url"])
+        current_hash = hash(content)
+        
+        # Если данные не изменились
+        if program["last_hash"] == current_hash:
+            return None
+        
+        program["last_hash"] = current_hash
+        df = pd.read_excel(BytesIO(content), engine='openpyxl', header=None)
+        
+        # Проверка структуры файла
+        if df.shape[1] < 32:
+            raise ValueError(f"Файл содержит {df.shape[1]} столбцов (ожидалось 32)")
+        
+        report_datetime = df.iloc[4, 5] if pd.notna(df.iloc[4, 5]) else "не указана"
+        if pd.api.types.is_datetime64_any_dtype(df.iloc[4, 5]):
+            report_datetime = report_datetime.strftime("%d.%m.%Y %H:%M")
+        
+        program["last_update"] = report_datetime
+        
+        # Фильтрация данных
+        filtered = df[
+            (df[9].astype(str).str.strip().str.upper() == "ДА") & 
+            (df[11].astype(str).str.strip() == str(program["priority"]))
+        ].copy()
+        
+        if filtered.empty:
+            return None
+        
+        filtered = filtered.sort_values(by=18, ascending=False)
+        filtered['rank'] = range(1, len(filtered) + 1)
+        
+        applicant = filtered[filtered[1].astype(str).str.strip() == "4272684"]
+        if applicant.empty:
+            return None
+        
+        rank = applicant['rank'].values[0]
+        score = applicant[18].values[0]
+        
+        other_priority = 1 if program["priority"] == 2 else 2
+        filtered_other = df[
+            (df[9].astype(str).str.strip().str.upper() == "ДА") & 
+            (df[11].astype(str).str.strip() == str(other_priority))
+        ].copy()
+        
+        count_higher = len(filtered_other[filtered_other[18] > score]) if not filtered_other.empty else 0
+        
+        return (
+            f"🔔 *Обновление данных по программе {program['name']}*\n"
+            f"📅 Дата обновления: {report_datetime}\n\n"
+            f"🎯 Мест на программе: *{program['places']}*\n"
+            f"🏆 Ваш рейтинг: *{rank}*\n"
+            f"🔺 Людей с {other_priority} приоритетом и баллом выше: *{count_higher}*"
+        )
+    except Exception as e:
+        logger.error(f"Ошибка обработки данных: {e}")
+        return None
+
+async def check_updates(bot: Bot):
+    while True:
+        try:
+            await asyncio.sleep(1800)  # Проверка каждые 30 минут
+            
+            for program_key in PROGRAMS:
+                update_msg = await process_data(program_key)
+                if update_msg:
+                    # Отправляем обновления подписанным пользователям
+                    for user_id, programs in subscriptions.items():
+                        if program_key in programs and programs[program_key]:
+                            try:
+                                await bot.send_message(
+                                    user_id,
+                                    update_msg,
+                                    parse_mode=ParseMode.MARKDOWN,
+                                    reply_markup=get_program_keyboard(
+                                        include_refresh=True,
+                                        include_subscribe=True,
+                                        current_program=program_key
+                                    )
+                                )
+                            except Exception as e:
+                                logger.error(f"Не удалось отправить сообщение пользователю {user_id}: {e}")
+        except Exception as e:
+            logger.error(f"Ошибка в check_updates: {e}")
+
 async def start(message: types.Message):
     log_user_action(message.from_user.id, "Started bot")
-    await message.answer("Выбери программу для анализа рейтинга:", reply_markup=get_program_keyboard())
+    await message.answer(
+        "Выберите программу для анализа рейтинга:",
+        reply_markup=get_program_keyboard()
+    )
 
 async def process_program(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     
     if callback.data.startswith("refresh_"):
         key = callback.data.split("_")[1]
-        await callback.answer("Обновляю данные...")
+        await callback.answer("Обновляем данные...")
+    elif callback.data.startswith("subscribe_"):
+        key = callback.data.split("_")[1]
+        subscriptions[user_id][key] = not subscriptions[user_id].get(key, False)
+        action = "подписался" if subscriptions[user_id][key] else "отписался"
+        await callback.answer(f"Вы {action} на обновления")
+        return
     else:
         key = callback.data
     
@@ -84,123 +198,66 @@ async def process_program(callback: types.CallbackQuery):
         return
         
     program = PROGRAMS[key]
+    log_user_action(user_id, f"Selected program: {program['name']}")
     
     try:
-        log_user_action(user_id, f"Selected program: {program['name']}")
         await callback.answer()
-        msg = await callback.message.answer(f"🔄 Загружаю данные: *{program['name']}*", parse_mode=ParseMode.MARKDOWN)
-
-        try:
-            log_user_action(user_id, f"Downloading data from {program['url']}")
-            async with aiohttp.ClientSession() as session:
-                async with session.get(program['url'], timeout=10) as response:
-                    response.raise_for_status()
-                    content = await response.read()
-                    df = pd.read_excel(BytesIO(content), engine='openpyxl', header=None)
-        except Exception as e:
-            error_msg = f"Ошибка загрузки: {str(e)[:200]}"
-            log_user_action(user_id, error_msg)
-            await callback.message.answer(f"❌ {error_msg}", reply_markup=get_program_keyboard(include_refresh=True, current_program=key))
-            return
-
-        # Проверяем, что столбцов достаточно (32)
-        if df.shape[1] < 32:
-            error_msg = f"Ошибка: файл содержит {df.shape[1]} столбцов (ожидалось 32)."
-            log_user_action(user_id, error_msg)
-            await callback.message.answer(f"❌ {error_msg}", reply_markup=get_program_keyboard(include_refresh=True, current_program=key))
-            return
+        msg = await callback.message.answer(
+            f"🔄 Загружаю данные: *{program['name']}*",
+            parse_mode=ParseMode.MARKDOWN
+        )
         
-        try:
-            report_datetime = df.iloc[4, 5] if pd.notna(df.iloc[4, 5]) else "не указана"
-            if pd.api.types.is_datetime64_any_dtype(df.iloc[4, 5]):
-                report_datetime = report_datetime.strftime("%d.%m.%Y %H:%M")
-            
-            target_priority = program["priority"]
-            places = program["places"]
-            
-            # Фильтрация по согласию ("ДА") и приоритету (столбец 12 - индекс 11)
-            filtered = df[
-                (df[9].astype(str).str.strip().str.upper() == "ДА") & 
-                (df[11].astype(str).str.strip() == str(target_priority))
-            ].copy()
-        
-            if filtered.empty:
-                log_user_action(user_id, f"No applicants with priority {target_priority}")
-                await callback.message.answer(f"⚠️ Нет абитуриентов с приоритетом {target_priority}.", 
-                                           reply_markup=get_program_keyboard(include_refresh=True, current_program=key))
-                return
-        
-            # Сортируем по баллам (столбец 19 - индекс 18) по убыванию и добавляем ранги
-            filtered = filtered.sort_values(by=18, ascending=False)
-            filtered['rank'] = range(1, len(filtered) + 1)
-
-            # Ищем абитуриента с ID 4272684 (столбец 2 - индекс 1)
-            applicant = filtered[filtered[1].astype(str).str.strip() == "4272684"]  
-            if applicant.empty:
-                log_user_action(user_id, "Applicant 4272684 not found")
-                await callback.message.answer("🚫 Номер 4272684 не найден.", 
-                                           reply_markup=get_program_keyboard(include_refresh=True, current_program=key))
-                return
-        
-            rank = applicant['rank'].values[0]
-            score = applicant[18].values[0]
-        
-            # Формируем сообщение с результатами
-            result_msg = (
-                f"📅 *Дата обновления данных:* {report_datetime}\n\n"
-                f"🎯 Мест на программе: *{places}*\n\n"
-                f"✅ Твой рейтинг среди {target_priority} приоритета: *{rank}*"
+        update_msg = await process_data(key, user_id)
+        if update_msg:
+            await callback.message.answer(
+                update_msg,
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=get_program_keyboard(
+                    include_refresh=True,
+                    include_subscribe=True,
+                    current_program=key
+                )
             )
-        
-            # Проверяем абитуриентов с другим приоритетом
-            other_priority = 1 if target_priority == 2 else 2
-            filtered_other = df[
-                (df[9].astype(str).str.strip().str.upper() == "ДА") & 
-                (df[11].astype(str).str.strip() == str(other_priority))
-            ].copy()
-        
-            if not filtered_other.empty:
-                higher_other = filtered_other[filtered_other[18] > score]
-                count_higher = len(higher_other)
-                result_msg += f"\n\n🔺 Людей с {other_priority} приоритетом и баллом выше: *{count_higher}*"
-            else:
-                result_msg += f"\n\n🔺 Людей с {other_priority} приоритетом и баллом выше: *0*"
-        
-            log_user_action(user_id, "Successfully processed request")
-            await callback.message.answer(result_msg, 
-                                        parse_mode=ParseMode.MARKDOWN, 
-                                        reply_markup=get_program_keyboard(include_refresh=True, current_program=key))
-        
-        except Exception as e:
-            error_msg = f"Ошибка обработки данных: {str(e)[:200]}"
-            log_user_action(user_id, error_msg)
-            await callback.message.answer(f"❌ {error_msg}", 
-                                        reply_markup=get_program_keyboard(include_refresh=True, current_program=key))
-
+        else:
+            await callback.message.answer(
+                "Данные не изменились с последней проверки.",
+                reply_markup=get_program_keyboard(
+                    include_refresh=True,
+                    include_subscribe=True,
+                    current_program=key
+                )
+            )
     except Exception as e:
-        logger.exception("Unexpected error in process_program")
-        await callback.message.answer("⚠️ Произошла непредвиденная ошибка", 
-                                    reply_markup=get_program_keyboard(include_refresh=True, current_program=key))
+        logger.error(f"Ошибка в process_program: {e}")
+        await callback.message.answer(
+            "⚠️ Произошла ошибка при обработке данных",
+            reply_markup=get_program_keyboard(
+                include_refresh=True,
+                include_subscribe=True,
+                current_program=key
+            )
+        )
+
+async def on_startup(bot: Bot):
+    global check_task
+    check_task = asyncio.create_task(check_updates(bot))
+
+async def on_shutdown(bot: Bot):
+    if check_task:
+        check_task.cancel()
+    await bot.session.close()
 
 async def main():
-    try:
-        logger.info("Starting bot...")
-        bot = Bot(token=TOKEN)
-        dp = Dispatcher()
-        
-        dp.message.register(start, F.text == "/start")
-        dp.callback_query.register(process_program, F.data.startswith("hse") | F.data.startswith("resh") | F.data.startswith("refresh_"))
-        
-        await dp.start_polling(bot)
-    except asyncio.CancelledError:
-        logger.info("Bot stopped by cancellation")
-    except Exception as e:
-        logger.error(f"Bot crashed: {e}")
-        raise
-    finally:
-        if 'bot' in locals():
-            await bot.session.close()
-        logger.info("Bot fully stopped")
+    bot = Bot(token=TOKEN)
+    dp = Dispatcher()
+    
+    dp.startup.register(on_startup)
+    dp.shutdown.register(on_shutdown)
+    
+    dp.message.register(start, Command("start"))
+    dp.callback_query.register(process_program)
+    
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
