@@ -1,17 +1,28 @@
-from aiogram import Bot, Dispatcher, types
-from aiogram.utils import executor
 import os
-import pandas as pd
+import logging
+from datetime import datetime
 import requests
+import pandas as pd
 from io import BytesIO
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
+# Настройка логирования
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+# Получение токена из переменной окружения
 TOKEN = os.environ.get("TOKEN")
 if not TOKEN:
     raise ValueError("Токен не найден. Установите переменную окружения TOKEN.")
 
-bot = Bot(token=TOKEN)
-dp = Dispatcher(bot)
+# ID пользователя для поиска
+USER_ID = "4272684"
 
+# Словарь программ
 PROGRAMS = {
     "hse": {
         "name": "📊 Экономика",
@@ -27,62 +38,163 @@ PROGRAMS = {
     }
 }
 
-def get_program_info(program_key, user_number=4272684):
+def download_excel_file(url):
+    """Загружает Excel файл по URL"""
+    try:
+        response = requests.get(url, timeout=30)
+        response.raise_for_status()
+        return BytesIO(response.content)
+    except requests.RequestException as e:
+        logger.error(f"Ошибка при загрузке файла {url}: {e}")
+        return None
+
+def analyze_program_data(program_key):
+    """Анализирует данные программы и возвращает статистику"""
     program = PROGRAMS[program_key]
-    url = program["url"]
-    K = program["priority"]
-    places = program["places"]
     
-    # Загрузка Excel файла
-    response = requests.get(url)
-    if response.status_code != 200:
-        return "Ошибка: не удалось загрузить файл."
+    # Загружаем файл
+    excel_file = download_excel_file(program["url"])
+    if not excel_file:
+        return None
     
-    # Чтение Excel файла
-    df = pd.read_excel(BytesIO(response.content), header=None)
-    
-    # Фильтрация строк, где столбец 10 (индекс 9) равен "Да"
-    df_filtered = df[df.iloc[:, 9] == "Да"]
-    
-    # Поиск строки пользователя
-    user_row = df_filtered[df_filtered.iloc[:, 1] == user_number]
-    if user_row.empty:
-        return "Ошибка: пользователь не найден."
-    
-    user_score = user_row.iloc[0, 18]
-    
-    # Поиск всех с приоритетом K
-    priority_K = df_filtered[df_filtered.iloc[:, 11] == K]
-    scores_K = priority_K.iloc[:, 18]
-    N_higher = (scores_K > user_score).sum()
-    rank = N_higher + 1
-    
-    # Подсчет людей с другим приоритетом и более высоким баллом
-    other_priority = 3 - K
-    priority_other = df_filtered[df_filtered.iloc[:, 11] == other_priority]
-    num_higher_other = (priority_other.iloc[:, 18] > user_score).sum()
-    
-    # Формирование сообщения
-    message = f"📅 Дата обновления данных: 19.07.2025 19:06:10\n\n"
-    message += f"🎯 Мест на программе: {places}\n\n"
-    message += f"✅ Твой рейтинг среди {K} приоритета: {rank}\n\n"
-    message += f"🔺 Людей с {other_priority} приоритетом и баллом выше: {num_higher_other}"
-    
-    return message
+    try:
+        # Читаем Excel файл
+        df = pd.read_excel(excel_file, engine='openpyxl')
+        
+        # Находим пользователя
+        # Столбец B (индекс 1) - номер человека
+        # Столбец J (индекс 9) - статус "Да"
+        # Столбец L (индекс 11) - приоритет
+        # Столбец S (индекс 18) - балл
+        
+        user_row = df[df.iloc[:, 1].astype(str) == USER_ID]
+        
+        if user_row.empty:
+            return {
+                "error": f"Пользователь {USER_ID} не найден в списках программы"
+            }
+        
+        user_data = user_row.iloc[0]
+        
+        # Проверяем, что в 10 столбце "Да"
+        if str(user_data.iloc[9]).strip().lower() != "да":
+            return {
+                "error": "Пользователь не соответствует критериям (10 столбец не содержит 'Да')"
+            }
+        
+        user_priority = int(user_data.iloc[11])  # приоритет пользователя
+        user_score = float(user_data.iloc[18])   # балл пользователя
+        
+        # Фильтруем данные: только те, у кого в 10 столбце "Да"
+        valid_candidates = df[df.iloc[:, 9].astype(str).str.strip().str.lower() == "да"].copy()
+        
+        # Считаем рейтинг среди своего приоритета
+        same_priority = valid_candidates[valid_candidates.iloc[:, 11] == user_priority]
+        same_priority_better = same_priority[same_priority.iloc[:, 18] > user_score]
+        rank_in_priority = len(same_priority_better) + 1
+        
+        # Считаем людей с другим приоритетом и баллом выше
+        if user_priority == 1:
+            other_priority = 2
+        else:
+            other_priority = 1
+            
+        other_priority_candidates = valid_candidates[valid_candidates.iloc[:, 11] == other_priority]
+        other_priority_better = other_priority_candidates[other_priority_candidates.iloc[:, 18] > user_score]
+        other_priority_count = len(other_priority_better)
+        
+        # Получаем текущую дату и время
+        update_time = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+        
+        return {
+            "update_time": update_time,
+            "places": program["places"],
+            "user_priority": user_priority,
+            "rank_in_priority": rank_in_priority,
+            "other_priority_count": other_priority_count,
+            "other_priority": other_priority
+        }
+        
+    except Exception as e:
+        logger.error(f"Ошибка при обработке данных: {e}")
+        return {"error": f"Ошибка при обработке данных: {str(e)}"}
 
-@dp.message_handler(commands=['start'])
-async def start(message: types.Message):
-    keyboard = types.InlineKeyboardMarkup()
-    keyboard.add(types.InlineKeyboardButton("Экономика", callback_data="hse"))
-    keyboard.add(types.InlineKeyboardButton("Совбак НИУ ВШЭ и РЭШ", callback_data="resh"))
-    await message.reply("Выберите программу:", reply_markup=keyboard)
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик команды /start"""
+    keyboard = [
+        [InlineKeyboardButton("📊 Экономика", callback_data='hse')],
+        [InlineKeyboardButton("📘 Совбак НИУ ВШЭ и РЭШ", callback_data='resh')]
+    ]
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        'Выберите программу для получения информации о поступлении:',
+        reply_markup=reply_markup
+    )
 
-@dp.callback_query_handler(lambda c: c.data in ["hse", "resh"])
-async def process_callback(callback_query: types.CallbackQuery):
-    program_key = callback_query.data
-    info = get_program_info(program_key)
-    await bot.send_message(callback_query.from_user.id, info)
-    await callback_query.answer()
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик нажатий на кнопки"""
+    query = update.callback_query
+    await query.answer()
+    
+    program_key = query.data
+    
+    if program_key not in PROGRAMS:
+        await query.edit_message_text("Неизвестная программа")
+        return
+    
+    program = PROGRAMS[program_key]
+    
+    # Показываем индикатор загрузки
+    await query.edit_message_text("🔄 Загружаю данные...")
+    
+    # Анализируем данные
+    result = analyze_program_data(program_key)
+    
+    if not result:
+        await query.edit_message_text("❌ Ошибка при загрузке данных. Попробуйте позже.")
+        return
+    
+    if "error" in result:
+        await query.edit_message_text(f"❌ {result['error']}")
+        return
+    
+    # Формируем сообщение с результатами
+    message = f"""📊 {program['name']}
+
+📅 Дата обновления данных: {result['update_time']}
+🎯 Мест на программе: {result['places']}
+✅ Твой рейтинг среди {result['user_priority']} приоритета: {result['rank_in_priority']}
+🔺 Людей с {result['other_priority']} приоритетом и баллом выше: {result['other_priority_count']}"""
+    
+    # Добавляем кнопки для повторного выбора
+    keyboard = [
+        [InlineKeyboardButton("📊 Экономика", callback_data='hse')],
+        [InlineKeyboardButton("📘 Совбак НИУ ВШЭ и РЭШ", callback_data='resh')]
+    ]
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(message, reply_markup=reply_markup)
+
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик ошибок"""
+    logger.error(f"Ошибка: {context.error}")
+
+def main():
+    """Главная функция запуска бота"""
+    # Создаем приложение
+    application = Application.builder().token(TOKEN).build()
+    
+    # Добавляем обработчики
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CallbackQueryHandler(button_handler))
+    application.add_error_handler(error_handler)
+    
+    # Запускаем бота
+    logger.info("Бот запущен")
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
-    executor.start_polling(dp, skip_updates=True)
+    main()
