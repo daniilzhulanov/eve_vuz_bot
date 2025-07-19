@@ -121,7 +121,6 @@ async def process_data(program_key, user_id=None, is_update=False):
         rank = applicant['rank'].values[0]
         score = applicant[18].values[0]
         
-        # Оригинальное оформление сообщения
         if is_update:
             result_msg = (
                 f"🔔 *Обновление данных*\n\n"
@@ -215,11 +214,9 @@ async def process_program(callback: types.CallbackQuery):
     
     try:
         await callback.answer()
-        msg = await callback.message.answer("⏳ Загружаю данные...")
-        
         status_msg = await process_data(key, user_id)
         if status_msg:
-            await callback.message.edit_text(
+            await callback.message.answer(
                 status_msg,
                 parse_mode=ParseMode.MARKDOWN,
                 reply_markup=get_program_keyboard(
@@ -229,7 +226,7 @@ async def process_program(callback: types.CallbackQuery):
                 )
             )
         else:
-            await callback.message.edit_text(
+            await callback.message.answer(
                 "❌ Не удалось получить данные",
                 reply_markup=get_program_keyboard(
                     include_refresh=True,
@@ -238,7 +235,7 @@ async def process_program(callback: types.CallbackQuery):
             )
     except Exception as e:
         logger.error(f"Ошибка: {e}")
-        await callback.message.edit_text(
+        await callback.message.answer(
             "⚠️ Произошла ошибка",
             reply_markup=get_program_keyboard(
                 include_refresh=True,
