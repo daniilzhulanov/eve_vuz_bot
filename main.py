@@ -6,6 +6,7 @@ from aiogram.filters import CommandStart, Text
 from openpyxl import load_workbook
 from datetime import datetime
 import tempfile
+import logging
 import requests
 
 # Конфигурация
