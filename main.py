@@ -151,7 +151,7 @@ async def process_program(callback: types.CallbackQuery):
             df[11] = df[11].astype(str).str.strip()
             df[18] = pd.to_numeric(df[18], errors='coerce')
             filtered_other = df[
-                (df[24] == "ДА") & 
+                (df[9] == "ДА") & 
                 (df[11] == other_priority) & 
                 (df[18] > score)
             ]
