@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 import aiohttp
 import nest_asyncio
 from collections import defaultdict
+import hashlib
 
 # Настройка event loop
 nest_asyncio.apply()
@@ -38,7 +39,6 @@ PROGRAMS = {
         "url": "https://enrol.hse.ru/storage/public_report_2025/moscow/Bachelors/BD_moscow_Economy_O.xlsx",
         "priority": 1,
         "places": 10,
-        "last_update": None,
         "last_hash": None
     },
     "resh": {
@@ -46,7 +46,6 @@ PROGRAMS = {
         "url": "https://enrol.hse.ru/storage/public_report_2025/moscow/Bachelors/BD_moscow_RESH_O.xlsx",
         "priority": 2,
         "places": 6,
-        "last_update": None,
         "last_hash": None
     }
 }
@@ -67,12 +66,12 @@ def get_program_keyboard(include_refresh=False, include_subscribe=False, current
     ]
     
     if include_refresh and current_program in PROGRAMS:
-        buttons.append([InlineKeyboardButton(text="🔄 Обновить данные", callback_data=f"refresh_{current_program}")])
+        buttons.append([InlineKeyboardButton(text="🔄 Обновить", callback_data=f"refresh_{current_program}")])
     
     if include_subscribe and current_program in PROGRAMS:
         user_id = None  # Будет установлено в обработчике
         is_subscribed = subscriptions.get(user_id, {}).get(current_program, False)
-        text = "❌ Отписаться" if is_subscribed else "✅ Подписаться"
+        text = "🔔 Отписаться" if is_subscribed else "🔕 Подписаться"
         buttons.append([InlineKeyboardButton(text=text, callback_data=f"subscribe_{current_program}")])
     
     return InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -83,28 +82,25 @@ async def download_data(url):
             response.raise_for_status()
             return await response.read()
 
-async def process_data(program_key, user_id=None):
+async def generate_status_message(program_key, is_update=False):
     program = PROGRAMS[program_key]
     try:
         content = await download_data(program["url"])
-        current_hash = hash(content)
+        current_hash = hashlib.md5(content).hexdigest()
         
-        # Если данные не изменились
-        if program["last_hash"] == current_hash:
+        # Для автоматических проверок - пропускаем если нет изменений
+        if is_update and program["last_hash"] == current_hash:
             return None
-        
+            
         program["last_hash"] = current_hash
         df = pd.read_excel(BytesIO(content), engine='openpyxl', header=None)
         
-        # Проверка структуры файла
         if df.shape[1] < 32:
-            raise ValueError(f"Файл содержит {df.shape[1]} столбцов (ожидалось 32)")
+            raise ValueError(f"Неверный формат файла")
         
         report_datetime = df.iloc[4, 5] if pd.notna(df.iloc[4, 5]) else "не указана"
         if pd.api.types.is_datetime64_any_dtype(df.iloc[4, 5]):
             report_datetime = report_datetime.strftime("%d.%m.%Y %H:%M")
-        
-        program["last_update"] = report_datetime
         
         # Фильтрация данных
         filtered = df[
@@ -133,13 +129,21 @@ async def process_data(program_key, user_id=None):
         
         count_higher = len(filtered_other[filtered_other[18] > score]) if not filtered_other.empty else 0
         
-        return (
-            f"🔔 *Обновление данных по программе {program['name']}*\n"
-            f"📅 Дата обновления: {report_datetime}\n\n"
-            f"🎯 Мест на программе: *{program['places']}*\n"
-            f"🏆 Ваш рейтинг: *{rank}*\n"
-            f"🔺 Людей с {other_priority} приоритетом и баллом выше: *{count_higher}*"
-        )
+        if is_update:
+            return (
+                f"🔔 *Обновление данных*\n"
+                f"Программа: {program['name']}\n"
+                f"Дата: {report_datetime}\n\n"
+                f"🏆 Ваш рейтинг: {rank}\n"
+                f"🔺 Выше с др. приоритетом: {count_higher}"
+            )
+        else:
+            return (
+                f"Программа: {program['name']}\n"
+                f"Дата: {report_datetime}\n\n"
+                f"🏆 Ваш рейтинг: {rank}\n"
+                f"🔺 Выше с др. приоритетом: {count_higher}"
+            )
     except Exception as e:
         logger.error(f"Ошибка обработки данных: {e}")
         return None
@@ -150,9 +154,8 @@ async def check_updates(bot: Bot):
             await asyncio.sleep(1800)  # Проверка каждые 30 минут
             
             for program_key in PROGRAMS:
-                update_msg = await process_data(program_key)
+                update_msg = await generate_status_message(program_key, is_update=True)
                 if update_msg:
-                    # Отправляем обновления подписанным пользователям
                     for user_id, programs in subscriptions.items():
                         if program_key in programs and programs[program_key]:
                             try:
@@ -167,14 +170,14 @@ async def check_updates(bot: Bot):
                                     )
                                 )
                             except Exception as e:
-                                logger.error(f"Не удалось отправить сообщение пользователю {user_id}: {e}")
+                                logger.error(f"Ошибка отправки: {e}")
         except Exception as e:
             logger.error(f"Ошибка в check_updates: {e}")
 
 async def start(message: types.Message):
     log_user_action(message.from_user.id, "Started bot")
     await message.answer(
-        "Выберите программу для анализа рейтинга:",
+        "Выберите программу:",
         reply_markup=get_program_keyboard()
     )
 
@@ -183,35 +186,31 @@ async def process_program(callback: types.CallbackQuery):
     
     if callback.data.startswith("refresh_"):
         key = callback.data.split("_")[1]
-        await callback.answer("Обновляем данные...")
+        await callback.answer("Загружаем...")
     elif callback.data.startswith("subscribe_"):
         key = callback.data.split("_")[1]
         subscriptions[user_id][key] = not subscriptions[user_id].get(key, False)
-        action = "подписался" if subscriptions[user_id][key] else "отписался"
-        await callback.answer(f"Вы {action} на обновления")
+        action = "подписан" if subscriptions[user_id][key] else "отписан"
+        await callback.answer(f"Вы {action}")
         return
     else:
         key = callback.data
     
     if key not in PROGRAMS:
-        await callback.answer("Неизвестная программа")
+        await callback.answer("Ошибка выбора")
         return
         
     program = PROGRAMS[key]
-    log_user_action(user_id, f"Selected program: {program['name']}")
+    log_user_action(user_id, f"Selected: {program['name']}")
     
     try:
         await callback.answer()
-        msg = await callback.message.answer(
-            f"🔄 Загружаю данные: *{program['name']}*",
-            parse_mode=ParseMode.MARKDOWN
-        )
+        msg = await callback.message.answer("⏳ Обработка данных...")
         
-        update_msg = await process_data(key, user_id)
-        if update_msg:
-            await callback.message.answer(
-                update_msg,
-                parse_mode=ParseMode.MARKDOWN,
+        status_msg = await generate_status_message(key)
+        if status_msg:
+            await callback.message.edit_text(
+                status_msg,
                 reply_markup=get_program_keyboard(
                     include_refresh=True,
                     include_subscribe=True,
@@ -219,21 +218,19 @@ async def process_program(callback: types.CallbackQuery):
                 )
             )
         else:
-            await callback.message.answer(
-                "Данные не изменились с последней проверки.",
+            await callback.message.edit_text(
+                "❌ Не удалось получить данные",
                 reply_markup=get_program_keyboard(
                     include_refresh=True,
-                    include_subscribe=True,
                     current_program=key
                 )
             )
     except Exception as e:
-        logger.error(f"Ошибка в process_program: {e}")
-        await callback.message.answer(
-            "⚠️ Произошла ошибка при обработке данных",
+        logger.error(f"Ошибка: {e}")
+        await callback.message.edit_text(
+            "⚠️ Ошибка обработки",
             reply_markup=get_program_keyboard(
                 include_refresh=True,
-                include_subscribe=True,
                 current_program=key
             )
         )
