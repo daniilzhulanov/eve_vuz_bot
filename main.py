@@ -132,7 +132,7 @@ async def process_program(callback: types.CallbackQuery):
         
             # Сортируем по баллам (столбец 19 - индекс 18) по убыванию и добавляем ранги
             filtered = filtered.sort_values(by=18, ascending=False)
-            filtered['rank'] = range(1, len(filtered) + 1)
+            filtered['rank'] = range(1, len(filtered))
         
             # Ищем абитуриента с ID 4272684 (столбец 2 - индекс 1)
             applicant = filtered[filtered[1].astype(str).str.strip() == "4272684"]  
