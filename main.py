@@ -85,102 +85,88 @@ async def process_program(callback: types.CallbackQuery):
         
     program = PROGRAMS[key]
     
-    try:
-        log_user_action(user_id, f"Selected program: {program['name']}")
-        await callback.answer()
-        msg = await callback.message.answer(f"🔄 Загружаю данные: *{program['name']}*", parse_mode=ParseMode.MARKDOWN)
-
         try:
+            log_user_action(user_id, f"Selected program: {program['name']}")
+            await callback.answer()
+            msg = await callback.message.answer(f"🔄 Загружаю данные: *{program['name']}*", parse_mode=ParseMode.MARKDOWN)
+        
             log_user_action(user_id, f"Downloading data from {program['url']}")
             async with aiohttp.ClientSession() as session:
                 async with session.get(program['url'], timeout=10) as response:
                     response.raise_for_status()
                     content = await response.read()
-                    df = pd.read_excel(BytesIO(content), engine='openpyxl', header=None)
-        except Exception as e:
-            error_msg = f"Ошибка загрузки: {str(e)[:200]}"
-            log_user_action(user_id, error_msg)
-            await callback.message.answer(f"❌ {error_msg}", reply_markup=get_program_keyboard(include_refresh=True, current_program=key))
-            return
-
-        # Проверяем, что столбцов достаточно (32)
-        if df.shape[1] < 32:
-            error_msg = f"Ошибка: файл содержит {df.shape[1]} столбцов (ожидалось 32)."
-            log_user_action(user_id, error_msg)
-            await callback.message.answer(f"❌ {error_msg}", reply_markup=get_program_keyboard(include_refresh=True, current_program=key))
-            return
         
-        try:
-            report_datetime = df.iloc[4, 5] if pd.notna(df.iloc[4, 5]) else "не указана"
-            if pd.api.types.is_datetime64_any_dtype(df.iloc[4, 5]):
+            # Считываем дату обновления из первых строк
+            meta_df = pd.read_excel(BytesIO(content), engine='openpyxl', header=None, nrows=6)
+            report_datetime = meta_df.iloc[4, 5]
+            if isinstance(report_datetime, pd.Timestamp):
                 report_datetime = report_datetime.strftime("%d.%m.%Y %H:%M")
-            
+        
+            # Считываем таблицу абитуриентов
+            df = pd.read_excel(BytesIO(content), engine='openpyxl', header=None, skiprows=14)
+        
             target_priority = program["priority"]
             places = program["places"]
-            
-            # Фильтрация по согласию ("ДА") и приоритету (столбец 12 - индекс 11)
+        
+            # Приводим нужные столбцы к строковому виду
+            df[24] = df[24].astype(str).str.strip().str.upper()  # согласие
+            df[11] = df[11].astype(str).str.strip()              # приоритет
+            df[1] = df[1].astype(str).str.strip()                # ID
+        
+            # Фильтрация: "ДА" + нужный приоритет
             filtered = df[
-                (df[9].astype(str).str.strip().str.upper() == "ДА") & 
-                (df[11].astype(str).str.strip() == str(target_priority))
+                (df[24] == "ДА") &
+                (df[11] == str(target_priority))
             ].copy()
         
             if filtered.empty:
                 log_user_action(user_id, f"No applicants with priority {target_priority}")
-                await callback.message.answer(f"⚠️ Нет абитуриентов с приоритетом {target_priority}.", 
-                                           reply_markup=get_program_keyboard(include_refresh=True, current_program=key))
+                await callback.message.answer(f"⚠️ Нет абитуриентов с приоритетом {target_priority}.",
+                                              reply_markup=get_program_keyboard(include_refresh=True, current_program=key))
                 return
         
-            # Сортируем по баллам (столбец 19 - индекс 18) по убыванию и добавляем ранги
+            # Сортировка по баллам
             filtered = filtered.sort_values(by=18, ascending=False)
             filtered['rank'] = range(1, len(filtered) + 1)
         
-            # Ищем абитуриента с ID 4272684 (столбец 2 - индекс 1)
-            applicant = filtered[filtered[1].astype(str).str.strip() == "4272684"]  
+            # Поиск нужного ID
+            applicant = filtered[filtered[1] == "4272684"]
             if applicant.empty:
                 log_user_action(user_id, "Applicant 4272684 not found")
-                await callback.message.answer("🚫 Номер 4272684 не найден.", 
-                                           reply_markup=get_program_keyboard(include_refresh=True, current_program=key))
+                await callback.message.answer("🚫 Номер 4272684 не найден.",
+                                              reply_markup=get_program_keyboard(include_refresh=True, current_program=key))
                 return
         
-            rank = applicant['rank'].values[0]
-            score = applicant[18].values[0]
+            rank = int(applicant['rank'].values[0])
+            score = float(applicant[18].values[0])
         
-            # Формируем сообщение с результатами
             result_msg = (
                 f"📅 *Дата обновления данных:* {report_datetime}\n\n"
                 f"🎯 Мест на программе: *{places}*\n\n"
                 f"✅ Твой рейтинг среди {target_priority} приоритета: *{rank}*"
             )
         
-            # Проверяем абитуриентов с другим приоритетом
-            other_priority = 1 if target_priority == 2 else 2
+            # Абитуриенты с другим приоритетом и более высоким баллом
+            other_priority = "1" if target_priority == 2 else "2"
+            df[11] = df[11].astype(str).str.strip()
+            df[18] = pd.to_numeric(df[18], errors='coerce')
             filtered_other = df[
-                (df[9].astype(str).str.strip().str.upper() == "ДА") & 
-                (df[11].astype(str).str.strip() == str(other_priority))
-            ].copy()
-        
-            if not filtered_other.empty:
-                higher_other = filtered_other[filtered_other[18] > score]
-                count_higher = len(higher_other)
-                result_msg += f"\n\n🔺 Людей с {other_priority} приоритетом и баллом выше: *{count_higher}*"
-            else:
-                result_msg += f"\n\n🔺 Людей с {other_priority} приоритетом и баллом выше: *0*"
+                (df[24] == "ДА") & 
+                (df[11] == other_priority) & 
+                (df[18] > score)
+            ]
+            count_higher = len(filtered_other)
+            result_msg += f"\n\n🔺 Людей с {other_priority} приоритетом и баллом выше: *{count_higher}*"
         
             log_user_action(user_id, "Successfully processed request")
-            await callback.message.answer(result_msg, 
-                                        parse_mode=ParseMode.MARKDOWN, 
-                                        reply_markup=get_program_keyboard(include_refresh=True, current_program=key))
+            await callback.message.answer(result_msg, parse_mode=ParseMode.MARKDOWN,
+                                          reply_markup=get_program_keyboard(include_refresh=True, current_program=key))
         
         except Exception as e:
             error_msg = f"Ошибка обработки данных: {str(e)[:200]}"
             log_user_action(user_id, error_msg)
-            await callback.message.answer(f"❌ {error_msg}", 
-                                        reply_markup=get_program_keyboard(include_refresh=True, current_program=key))
-
-    except Exception as e:
-        logger.exception("Unexpected error in process_program")
-        await callback.message.answer("⚠️ Произошла непредвиденная ошибка", 
-                                    reply_markup=get_program_keyboard(include_refresh=True, current_program=key))
+            await callback.message.answer(f"❌ {error_msg}",
+                                          reply_markup=get_program_keyboard(include_refresh=True, current_program=key))
 
 async def main():
     try:
