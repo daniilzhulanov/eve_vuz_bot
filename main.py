@@ -109,13 +109,13 @@ async def process_program(callback: types.CallbackQuery):
             places = program["places"]
         
             # Приводим нужные столбцы к строковому виду
-            df[24] = df[24].astype(str).str.strip().str.upper()  # согласие
+            df[9] = df[9].astype(str).str.strip().str.upper()  # квота
             df[11] = df[11].astype(str).str.strip()              # приоритет
             df[1] = df[1].astype(str).str.strip()                # ID
         
             # Фильтрация: "ДА" + нужный приоритет
             filtered = df[
-                (df[24] == "ДА") &
+                (df[9] == "ДА") &
                 (df[11] == str(target_priority))
             ].copy()
         
