@@ -41,7 +41,7 @@ PROGRAMS = {
     "resh": {
         "name": "📘 Совбак НИУ ВШЭ и РЭШ",
         "url": "https://enrol.hse.ru/storage/public_report_2025/moscow/Bachelors/BD_moscow_RESH_O.xlsx",
-        "priority": 3,
+        "priority": 2,
         "places": 6
     }
 }
@@ -153,7 +153,7 @@ async def process_program(callback: types.CallbackQuery):
             )
         
             # Проверяем абитуриентов с другим приоритетом
-            other_priority = 1 if target_priority == 3 else 3
+            other_priority = 1 if target_priority == 2 else 2
             filtered_other = df[
                 (df[9].astype(str).str.strip().str.upper() == "ДА") & 
                 (df[11].astype(str).str.strip() == str(other_priority))
