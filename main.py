@@ -11,8 +11,10 @@ from datetime import datetime
 import aiohttp
 import nest_asyncio
 
+
 # Применяем исправление для работы с event loop
 nest_asyncio.apply()
+
 
 # Настройка логирования
 logging.basicConfig(
@@ -24,6 +26,7 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
 
 TOKEN = os.environ.get("TOKEN")
 if not TOKEN:
@@ -45,11 +48,13 @@ PROGRAMS = {
     }
 }
 
+
 # Вспомогательные функции должны быть определены перед их использованием
 def log_user_action(user_id: int, action: str):
     """Логирование действий пользователя"""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     logger.info(f"User ID: {user_id} - Action: {action} - Time: {timestamp}")
+
 
 def get_program_keyboard(include_refresh=False, current_program=None):
     buttons = [
@@ -61,6 +66,7 @@ def get_program_keyboard(include_refresh=False, current_program=None):
         buttons.append([InlineKeyboardButton(text="🔄 Обновить данные", callback_data=f"refresh_{current_program}")])
     
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
 
 # Обработчики команд
 async def start(message: types.Message):
