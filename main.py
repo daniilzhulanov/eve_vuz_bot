@@ -50,8 +50,8 @@ PROGRAMS = {
     }
 }
 
-# Хранилище подписок
-subscriptions = defaultdict(dict)
+# Хранилище активных пользователей
+active_users = set()
 check_task = None
 
 def log_user_action(user_id: int, action: str):
@@ -59,7 +59,7 @@ def log_user_action(user_id: int, action: str):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     logger.info(f"User ID: {user_id} - Action: {action} - Time: {timestamp}")
 
-def get_program_keyboard(include_refresh=False, include_subscribe=False, current_program=None):
+def get_program_keyboard(include_refresh=False, current_program=None):
     buttons = [
         [InlineKeyboardButton(text=PROGRAMS["hse"]["name"], callback_data="hse")],
         [InlineKeyboardButton(text=PROGRAMS["resh"]["name"], callback_data="resh")]
@@ -67,11 +67,6 @@ def get_program_keyboard(include_refresh=False, include_subscribe=False, current
     
     if include_refresh and current_program in PROGRAMS:
         buttons.append([InlineKeyboardButton(text="🔄 Обновить данные", callback_data=f"refresh_{current_program}")])
-    
-    if include_subscribe and current_program in PROGRAMS:
-        is_subscribed = subscriptions.get(current_program, {}).get("subscribed", False)
-        text = "🔴 Отписаться" if is_subscribed else "🟢 Подписаться"
-        buttons.append([InlineKeyboardButton(text=text, callback_data=f"subscribe_{current_program}")])
     
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -158,12 +153,12 @@ async def process_data(program_key, user_id=None, is_update=False):
 async def check_updates(bot: Bot):
     while True:
         try:
-            await asyncio.sleep(300)  # Проверка каждые 15 минут
+            await asyncio.sleep(300)  # Проверка каждые 5 минут
             
             for program_key in PROGRAMS:
                 update_msg = await process_data(program_key, is_update=True)
                 if update_msg:
-                    for user_id in subscriptions.get(program_key, {}).get("users", []):
+                    for user_id in list(active_users):  # Используем копию списка на случай изменений
                         try:
                             await bot.send_message(
                                 user_id,
@@ -171,17 +166,20 @@ async def check_updates(bot: Bot):
                                 parse_mode=ParseMode.MARKDOWN,
                                 reply_markup=get_program_keyboard(
                                     include_refresh=True,
-                                    include_subscribe=True,
                                     current_program=program_key
                                 )
                             )
                         except Exception as e:
-                            logger.error(f"Ошибка отправки: {e}")
+                            logger.error(f"Ошибка отправки пользователю {user_id}: {e}")
+                            # Удаляем неактивного пользователя
+                            active_users.discard(user_id)
         except Exception as e:
             logger.error(f"Ошибка в check_updates: {e}")
 
 async def start(message: types.Message):
-    log_user_action(message.from_user.id, "Started bot")
+    user_id = message.from_user.id
+    active_users.add(user_id)  # Добавляем пользователя в список активных
+    log_user_action(user_id, "Started bot")
     await message.answer(
         "Выберите программу для анализа рейтинга:",
         reply_markup=get_program_keyboard()
@@ -189,21 +187,11 @@ async def start(message: types.Message):
 
 async def process_program(callback: types.CallbackQuery):
     user_id = callback.from_user.id
+    active_users.add(user_id)  # Добавляем пользователя в список активных
     
     if callback.data.startswith("refresh_"):
         key = callback.data.split("_")[1]
         await callback.answer("Обновляем данные...")
-    elif callback.data.startswith("subscribe_"):
-        key = callback.data.split("_")[1]
-        if user_id not in subscriptions.setdefault(key, {}).setdefault("users", []):
-            subscriptions[key]["users"].append(user_id)
-            subscriptions[key]["subscribed"] = True
-            await callback.answer("✅ Вы подписались на обновления")
-        else:
-            subscriptions[key]["users"].remove(user_id)
-            subscriptions[key]["subscribed"] = False
-            await callback.answer("❌ Вы отписались от обновлений")
-        return
     else:
         key = callback.data
     
@@ -223,7 +211,6 @@ async def process_program(callback: types.CallbackQuery):
                 parse_mode=ParseMode.MARKDOWN,
                 reply_markup=get_program_keyboard(
                     include_refresh=True,
-                    include_subscribe=True,
                     current_program=key
                 )
             )
