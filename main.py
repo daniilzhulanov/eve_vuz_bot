@@ -39,20 +39,35 @@ PROGRAMS = {
         "url": "https://enrol.hse.ru/storage/public_report_2025/moscow/Bachelors/BD_moscow_Economy_O.xlsx",
         "priority": 1,
         "places": 10,
-        "last_hash": None
+        "last_hash": None,
+        "last_rank": None,
+        "last_other_higher": None
     },
     "resh": {
         "name": "📘 Совбак НИУ ВШЭ и РЭШ",
         "url": "https://enrol.hse.ru/storage/public_report_2025/moscow/Bachelors/BD_moscow_RESH_O.xlsx",
         "priority": 2,
         "places": 6,
-        "last_hash": None
+        "last_hash": None,
+        "last_rank": None,
+        "last_other_higher": None
     }
 }
 
 # Хранилище активных пользователей
 active_users = set()
 check_task = None
+
+def format_change(current, previous):
+    if previous is None:
+        return ""
+    change = current - previous
+    if change == 0:
+        return " (не изменилось)"
+    elif change > 0:
+        return f" (+{change})"
+    else:
+        return f" ({change})"
 
 def log_user_action(user_id: int, action: str):
     """Логирование действий пользователя"""
@@ -85,7 +100,6 @@ async def process_data(program_key, user_id=None, is_update=False):
         if is_update and program["last_hash"] == current_hash:
             return None
             
-        program["last_hash"] = current_hash
         df = pd.read_excel(BytesIO(content), engine='openpyxl', header=None)
         
         if df.shape[1] < 32:
@@ -116,34 +130,43 @@ async def process_data(program_key, user_id=None, is_update=False):
         rank = applicant['rank'].values[0]
         score = applicant[18].values[0]
         
-        if is_update:
-            result_msg = (
-                f"🔔 *Обновление данных*\n"
-                f"📌 *Направление:* {program['name']}\n\n"
-                f"📅 *Дата обновления:* {report_datetime}\n\n"
-                f"🎯 Мест на программе: *{places}*\n\n"
-                f"✅ Твой рейтинг среди {target_priority} приоритета: *{rank}*"
-            )
-        else:
-            result_msg = (
-                f"📌 *Направление:* {program['name']}\n\n"
-                f"📅 *Дата обновления:* {report_datetime}\n\n"
-                f"🎯 Мест на программе: *{places}*\n\n"
-                f"✅ Твой рейтинг среди {target_priority} приоритета: *{rank}*"
-            )
-        
         other_priority = 1 if target_priority == 2 else 2
         filtered_other = df[
             (df[9].astype(str).str.strip().str.upper() == "ДА") & 
             (df[11].astype(str).str.strip() == str(other_priority))
         ].copy()
         
+        count_higher = 0
         if not filtered_other.empty:
             higher_other = filtered_other[filtered_other[18] > score]
             count_higher = len(higher_other)
-            result_msg += f"\n\n🔺 Людей с {other_priority} приоритетом и баллом выше: *{count_higher}*"
+        
+        # Формируем сообщение с изменениями
+        rank_change = format_change(rank, program["last_rank"])
+        higher_change = format_change(count_higher, program["last_other_higher"])
+        
+        if is_update:
+            result_msg = (
+                f"🔔 *Обновление данных*\n"
+                f"📌 *Направление:* {program['name']}\n\n"
+                f"📅 *Дата обновления:* {report_datetime}\n\n"
+                f"🎯 Мест на программе: *{places}*\n\n"
+                f"✅ Твой рейтинг среди {target_priority} приоритета: *{rank}{rank_change}*\n\n"
+                f"🔺 Людей с {other_priority} приоритетом и баллом выше: *{count_higher}{higher_change}*"
+            )
         else:
-            result_msg += f"\n\n🔺 Людей с {other_priority} приоритетом и баллом выше: *0*"
+            result_msg = (
+                f"📌 *Направление:* {program['name']}\n\n"
+                f"📅 *Дата обновления:* {report_datetime}\n\n"
+                f"🎯 Мест на программе: *{places}*\n\n"
+                f"✅ Твой рейтинг среди {target_priority} приоритета: *{rank}*\n\n"
+                f"🔺 Людей с {other_priority} приоритетом и баллом выше: *{count_higher}*"
+            )
+        
+        # Сохраняем текущие значения для сравнения в следующий раз
+        program["last_hash"] = current_hash
+        program["last_rank"] = rank
+        program["last_other_higher"] = count_higher
         
         return result_msg
     except Exception as e:
