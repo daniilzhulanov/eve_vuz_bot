@@ -158,7 +158,7 @@ async def process_data(program_key, user_id=None, is_update=False):
 async def check_updates(bot: Bot):
     while True:
         try:
-            await asyncio.sleep(900)  # Проверка каждые 15 минут
+            await asyncio.sleep(600)  # Проверка каждые 15 минут
             
             for program_key in PROGRAMS:
                 update_msg = await process_data(program_key, is_update=True)
