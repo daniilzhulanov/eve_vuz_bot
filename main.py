@@ -114,6 +114,10 @@ async def process_data(program_key, user_id=None, is_update=False):
         target_priority = program["priority"]
         places = program["places"]
         
+        # Преобразуем баллы в числа и фильтруем некорректные значения
+        df[18] = pd.to_numeric(df[18], errors='coerce')
+        df = df[pd.notna(df[18])]  # Удаляем строки с некорректными баллами
+        
         # Фильтрация по квоте (столбец 9) и приоритету (столбец 11)
         filtered = df[
             (df[9].astype(str).str.strip().str.upper() == "ДА") & 
@@ -131,7 +135,7 @@ async def process_data(program_key, user_id=None, is_update=False):
             return None
         
         rank = applicant['rank'].values[0]
-        score = applicant[18].values[0]
+        score = float(applicant[18].values[0])  # Явное преобразование в float
         
         # Расчет людей с другим приоритетом и баллом выше (без согласия)
         other_priority = 1 if target_priority == 2 else 2
@@ -145,23 +149,16 @@ async def process_data(program_key, user_id=None, is_update=False):
             higher_other = filtered_other[filtered_other[18] > score]
             count_higher = len(higher_other)
 
-        # Определяем приоритет для фильтрации согласий
-        consent_priority = 1  # Для всех программ смотрим только 1 приоритет
-        
-        # Фильтр для согласий:
-        # 1. Квота (столбец 9) = "ДА"
-        # 2. Приоритет (столбец 11) = consent_priority (1)
-        # 3. Согласие (столбец 24) = "ДА"
-        # 4. Балл выше текущего
+        # Фильтр для согласий (используем столбец 25 как указано в комментарии)
+        consent_priority = 1
         consent_filtered = df[
             (df[9].astype(str).str.strip().str.upper() == "ДА") &
             (df[11].astype(str).str.strip() == str(consent_priority)) &
-            (df[24].astype(str).str.strip().str.upper() == "ДА") &
+            (df[24].astype(str).str.strip().str.upper() == "ДА") &  # Столбец 25 для согласия
             (df[18] > score)
         ]
         
         count_consent_higher = len(consent_filtered)
-
         
         # Формируем сообщение с изменениями
         rank_change = format_change(rank, program["last_rank"])
