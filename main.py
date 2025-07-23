@@ -41,7 +41,8 @@ PROGRAMS = {
         "places": 10,
         "last_hash": None,
         "last_rank": None,
-        "last_other_higher": None
+        "last_other_higher": None,
+        "last_consent_higher": None  # Новое поле для отслеживания согласий
     },
     "resh": {
         "name": "📘 Совбак НИУ ВШЭ и РЭШ",
@@ -50,7 +51,8 @@ PROGRAMS = {
         "places": 6,
         "last_hash": None,
         "last_rank": None,
-        "last_other_higher": None
+        "last_other_higher": None,
+        "last_consent_higher": None  # Новое поле для отслеживания согласий
     }
 }
 
@@ -112,6 +114,7 @@ async def process_data(program_key, user_id=None, is_update=False):
         target_priority = program["priority"]
         places = program["places"]
         
+        # Фильтрация по квоте (столбец 9) и приоритету (столбец 11)
         filtered = df[
             (df[9].astype(str).str.strip().str.upper() == "ДА") & 
             (df[11].astype(str).str.strip() == str(target_priority))
@@ -130,6 +133,7 @@ async def process_data(program_key, user_id=None, is_update=False):
         rank = applicant['rank'].values[0]
         score = applicant[18].values[0]
         
+        # Расчет людей с другим приоритетом и баллом выше (без согласия)
         other_priority = 1 if target_priority == 2 else 2
         filtered_other = df[
             (df[9].astype(str).str.strip().str.upper() == "ДА") & 
@@ -140,11 +144,31 @@ async def process_data(program_key, user_id=None, is_update=False):
         if not filtered_other.empty:
             higher_other = filtered_other[filtered_other[18] > score]
             count_higher = len(higher_other)
+
+        # Определяем приоритет для фильтрации согласий
+        consent_priority = 1  # Для всех программ смотрим только 1 приоритет
+        
+        # Фильтр для согласий:
+        # 1. Квота (столбец 9) = "ДА"
+        # 2. Приоритет (столбец 11) = consent_priority (1)
+        # 3. Согласие (столбец 24) = "ДА"
+        # 4. Балл выше текущего
+        consent_filtered = df[
+            (df[9].astype(str).str.strip().str.upper() == "ДА") &
+            (df[11].astype(str).str.strip() == str(consent_priority)) &
+            (df[24].astype(str).str.strip().str.upper() == "ДА") &
+            (df[18] > score)
+        ]
+        
+        count_consent_higher = len(consent_filtered)
+
         
         # Формируем сообщение с изменениями
         rank_change = format_change(rank, program["last_rank"])
         higher_change = format_change(count_higher, program["last_other_higher"])
+        consent_change = format_change(count_consent_higher, program["last_consent_higher"])
         
+        # Обновляем сообщение с новым пунктом
         if is_update:
             result_msg = (
                 f"🔔 *Обновление данных*\n"
@@ -152,6 +176,7 @@ async def process_data(program_key, user_id=None, is_update=False):
                 f"📅 *Дата обновления:* {report_datetime}\n\n"
                 f"🎯 Мест на программе: *{places}*\n\n"
                 f"✅ Твой рейтинг среди {target_priority} приоритета: *{rank}{rank_change}*\n\n"
+                f"📥 Подано согласий с баллом выше (для 1 приоритета): *{count_consent_higher}{consent_change}*\n\n"
                 f"🔺 Людей с {other_priority} приоритетом и баллом выше: *{count_higher}{higher_change}*"
             )
         else:
@@ -160,13 +185,15 @@ async def process_data(program_key, user_id=None, is_update=False):
                 f"📅 *Дата обновления:* {report_datetime}\n\n"
                 f"🎯 Мест на программе: *{places}*\n\n"
                 f"✅ Твой рейтинг среди {target_priority} приоритета: *{rank}*\n\n"
+                f"📥 Подано согласий с баллом выше (для 1 приоритета): *{count_consent_higher}*\n\n"
                 f"🔺 Людей с {other_priority} приоритетом и баллом выше: *{count_higher}*"
             )
         
-        # Сохраняем текущие значения для сравнения в следующий раз
+        # Сохраняем текущие значения
         program["last_hash"] = current_hash
         program["last_rank"] = rank
         program["last_other_higher"] = count_higher
+        program["last_consent_higher"] = count_consent_higher  
         
         return result_msg
     except Exception as e:
@@ -176,7 +203,7 @@ async def process_data(program_key, user_id=None, is_update=False):
 async def check_updates(bot: Bot):
     while True:
         try:
-            await asyncio.sleep(300)  # Проверка каждые 5 минут
+            await asyncio.sleep(60)  # Проверка каждые минуту
             
             for program_key in PROGRAMS:
                 update_msg = await process_data(program_key, is_update=True)
