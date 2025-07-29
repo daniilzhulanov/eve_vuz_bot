@@ -269,7 +269,7 @@ async def process_mgu_data(program_key, user_id=None, is_update=False):
         return None
 
 async def process_hse_data(program_key, user_id=None, is_update=False):
-    """Обработка данных ВШЭ с полным соответствием требованиям"""
+    """Обработка данных ВШЭ с проверкой квоты (10 столбец)"""
     program = PROGRAMS[program_key]
     try:
         content = await download_data(program["url"])
@@ -290,21 +290,24 @@ async def process_hse_data(program_key, user_id=None, is_update=False):
         target_priority = program["priority"]
         places = program["places"]
         
-        # Преобразуем баллы в числа
+        # Преобразуем баллы в числа и фильтруем некорректные значения
         df[18] = pd.to_numeric(df[18], errors='coerce')
         df = df[pd.notna(df[18])]
 
-        # Находим данные абитуриента
-        applicant_data = df[df[1].astype(str).str.strip() == "4272684"]
+        # Находим данные абитуриента (с проверкой квоты)
+        applicant_data = df[
+            (df[1].astype(str).str.strip() == "4272684") & 
+            (df[9].astype(str).str.strip().str.upper() == "ДА")  # 10й столбец - квота
+        ]
         if applicant_data.empty:
             return None
             
         applicant_score = float(applicant_data[18].values[0])
         
-        # 1. Рейтинг среди 1 приоритета
+        # 1. Рейтинг среди 1 приоритета (с проверкой квоты)
         priority1_applicants = df[
             (df[11].astype(str).str.strip() == "1") &  # 12й столбец - приоритет
-            (df[9].astype(str).str.strip().str.upper() == "ДА")  # Квота
+            (df[9].astype(str).str.strip().str.upper() == "ДА")  # 10й столбец - квота
         ].copy()
         
         priority1_applicants = priority1_applicants.sort_values(by=18, ascending=False)
@@ -314,15 +317,17 @@ async def process_hse_data(program_key, user_id=None, is_update=False):
             priority1_applicants[1].astype(str).str.strip() == "4272684"
         ]['rank'].values[0]
         
-        # 2. БВИ с согласием (4="Да", 12="1", 25="Да")
+        # 2. БВИ с согласием (4="Да", 10="Да", 12="1", 25="Да")
         bvi_consents = len(df[
             (df[3].astype(str).str.strip().str.upper() == "ДА") &    # 4й столбец - БВИ
+            (df[9].astype(str).str.strip().str.upper() == "ДА") &     # 10й столбец - квота
             (df[11].astype(str).str.strip() == "1") &                # 12й столбец - приоритет
             (df[24].astype(str).str.strip().str.upper() == "ДА")     # 25й столбец - согласие
         ])
         
-        # 3. НЕ БВИ с согласием и баллом выше (12="1", 25="Да", балл > user_score, 4≠"Да")
+        # 3. НЕ БВИ с согласием и баллом выше (10="Да", 12="1", 25="Да", балл > user_score, 4≠"Да")
         non_bvi_higher = len(df[
+            (df[9].astype(str).str.strip().str.upper() == "ДА") &     # 10й столбец - квота
             (df[11].astype(str).str.strip() == "1") &                # Приоритет 1
             (df[24].astype(str).str.strip().str.upper() == "ДА") &   # Согласие
             (df[18] > applicant_score) &                             # Балл выше
@@ -347,7 +352,7 @@ async def process_hse_data(program_key, user_id=None, is_update=False):
                 f"✅ Твой рейтинг среди 1 приоритета: *{applicant_rank}{rank_change}*\n\n"
                 f"👥 Количество согласий у БВИ: *{bvi_consents}{bvi_change}*\n\n"
                 f"📊 Количество согласий у людей с баллом выше (не БВИ): *{non_bvi_higher}{higher_change}*\n\n"
-                f"🏆 Твое место, если подашь согласие: *{current_position}{pos_change}*"
+                f"🏆 Твое текущее место, если подашь согласие: *{current_position}{pos_change}*"
             )
         else:
             result_msg = (
@@ -357,7 +362,7 @@ async def process_hse_data(program_key, user_id=None, is_update=False):
                 f"✅ Твой рейтинг среди 1 приоритета: *{applicant_rank}*\n\n"
                 f"👥 Количество согласий у БВИ: *{bvi_consents}*\n\n"
                 f"📊 Количество согласий у людей с баллом выше (не БВИ): *{non_bvi_higher}*\n\n"
-                f"🏆 Твое место, если подашь согласие: *{current_position}*"
+                f"🏆 Твое текущее место, если подашь согласие: *{current_position}*"
             )
         
         # Сохраняем текущие значения
