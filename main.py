@@ -403,7 +403,7 @@ async def process_data(program_key, user_id=None, is_update=False):
 async def check_updates(bot: Bot):
     while True:
         try:
-            await asyncio.sleep(60)  # Проверка каждую минуту
+            await asyncio.sleep(600)  # Проверка каждую минуту
             
             for program_key in PROGRAMS:
                 update_msg = await process_data(program_key, is_update=True)
