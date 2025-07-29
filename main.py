@@ -98,7 +98,7 @@ def log_user_action(user_id: int, action: str):
 def get_program_keyboard(include_refresh=False, current_program=None):
     buttons = [
         [InlineKeyboardButton(text="📊 ВШЭ Экономика", callback_data="hse")],
-        [InlineKeyboardButton(text="📘 ВШЭ-РЭШ", callback_data="resh")],
+        [InlineKeyboardButton(text="📘 ВШЭ Совбак НИУ ВШЭ и РЭШ", callback_data="resh")],
         [InlineKeyboardButton(text="🏛️ МГУ Экономика", callback_data="mgu")]
     ]
     
