@@ -97,14 +97,10 @@ def log_user_action(user_id: int, action: str):
 def get_reply_keyboard():
     """Создает Reply-клавиатуру с кнопками выбора программ"""
     keyboard = [
-        [
-            types.KeyboardButton(text="📊 ВШЭ Экономика"),
-            types.KeyboardButton(text="📘 ВШЭ Совбак НИУ ВШЭ и РЭШ"),
-        ],
-        [
-            types.KeyboardButton(text="🏛️ МГУ Экономика"),
-            types.KeyboardButton(text="🔄 Обновить данные")
-        ]
+        [types.KeyboardButton(text="📊 ВШЭ Экономика")],
+        [types.KeyboardButton(text="📘 ВШЭ Совбак НИУ ВШЭ и РЭШ")],
+        [types.KeyboardButton(text="🏛️ МГУ Экономика")],
+        [types.KeyboardButton(text="🔄 Обновить данные")]
     ]
     return types.ReplyKeyboardMarkup(
         keyboard=keyboard,
