@@ -454,8 +454,26 @@ async def process_program(callback: types.CallbackQuery):
     
     try:
         await callback.answer()
+        
+        # Отправляем сообщение "Загружаю данные..."
+        loading_msg = await callback.message.answer(
+            "⏳ Загружаю данные...",
+            reply_markup=get_program_keyboard(
+                include_refresh=True,
+                current_program=key
+            )
+        )
+        
         status_msg = await process_data(key, user_id)
+        
         if status_msg:
+            # Удаляем сообщение "Загружаю данные..."
+            try:
+                await loading_msg.delete()
+            except Exception as e:
+                logger.error(f"Ошибка при удалении сообщения: {e}")
+            
+            # Отправляем результат
             await callback.message.answer(
                 status_msg,
                 parse_mode=ParseMode.MARKDOWN,
@@ -465,6 +483,12 @@ async def process_program(callback: types.CallbackQuery):
                 )
             )
         else:
+            # Удаляем сообщение "Загружаю данные..."
+            try:
+                await loading_msg.delete()
+            except Exception as e:
+                logger.error(f"Ошибка при удалении сообщения: {e}")
+                
             await callback.message.answer(
                 "❌ Не удалось получить данные",
                 reply_markup=get_program_keyboard(
@@ -474,6 +498,12 @@ async def process_program(callback: types.CallbackQuery):
             )
     except Exception as e:
         logger.error(f"Ошибка: {e}")
+        # Удаляем сообщение "Загружаю данные..." в случае ошибки
+        try:
+            await loading_msg.delete()
+        except Exception as e:
+            logger.error(f"Ошибка при удалении сообщения: {e}")
+            
         await callback.message.answer(
             "⚠️ Произошла ошибка",
             reply_markup=get_program_keyboard(
