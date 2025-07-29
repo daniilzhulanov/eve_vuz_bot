@@ -228,7 +228,7 @@ async def process_mgu_data(program_key, user_id=None, is_update=False):
                     higher_consents += 1
         
         # Расчет текущего места
-        current_position = bvi_consents + higher_consents
+        current_position = bvi_consents + higher_consents + 1
         
         # Формируем сообщение с изменениями
         if is_update:
@@ -328,7 +328,7 @@ async def process_hse_data(program_key, user_id=None, is_update=False):
         ])
 
         # 3. Текущее место при подаче согласия
-        current_position = bvi_consents + non_bvi_higher
+        current_position = bvi_consents + non_bvi_higher + 1
 
         # 4. Рейтинг в своем приоритете
         priority_applicants = df[
