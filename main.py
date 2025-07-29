@@ -268,7 +268,7 @@ async def process_mgu_data(program_key, user_id=None, is_update=False):
         logger.error(f"Ошибка обработки данных МГУ: {e}")
         return None
 
-async def process_data(program_key, user_id=None, is_update=False):
+async def process_hse_data(program_key, user_id=None, is_update=False):
     program = PROGRAMS[program_key]
     try:
         content = await download_data(program["url"])
