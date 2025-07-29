@@ -439,8 +439,7 @@ async def handle_program_selection(message: types.Message):
     program_mapping = {
         "📊 ВШЭ Экономика": "hse",
         "📘 ВШЭ Совбак НИУ ВШЭ и РЭШ": "resh",
-        "🏛️ МГУ Экономика": "mgu",
-        "🔄 Обновить данные": None
+        "🏛️ МГУ Экономика": "mgu"
     }
     
     key = program_mapping.get(message.text)
