@@ -268,8 +268,7 @@ async def process_mgu_data(program_key, user_id=None, is_update=False):
         logger.error(f"Ошибка обработки данных МГУ: {e}")
         return None
 
-async def process_hse_data(program_key, user_id=None, is_update=False):
-    """Обработка данных ВШЭ с дополнительными проверками"""
+async def process_data(program_key, user_id=None, is_update=False):
     program = PROGRAMS[program_key]
     try:
         content = await download_data(program["url"])
@@ -290,68 +289,63 @@ async def process_hse_data(program_key, user_id=None, is_update=False):
         target_priority = program["priority"]
         places = program["places"]
         
-        # Преобразуем баллы в числа и фильтруем некорректные значения
+        # Преобразуем баллы в числа
         df[18] = pd.to_numeric(df[18], errors='coerce')
         df = df[pd.notna(df[18])]
 
-        # Находим данные абитуриента (с проверкой квоты)
+        # Находим все записи абитуриента (для диагностики)
+        all_user_records = df[df[1].astype(str).str.strip() == "4272684"]
+        logger.debug(f"Все записи пользователя:\n{all_user_records.to_string()}")
+        
+        # Основная запись (с квотой и нужным приоритетом)
         applicant_data = df[
             (df[1].astype(str).str.strip() == "4272684") & 
-            (df[9].astype(str).str.strip().str.upper() == "ДА")
+            (df[9].astype(str).str.strip().str.upper() == "ДА") &
+            (df[11].astype(str).str.strip() == str(target_priority))
         ]
         
-        # Добавляем проверку на пустые данные
-        if applicant_data.empty or len(applicant_data) == 0:
-            logger.warning("Данные абитуриента не найдены или пусты")
-            return None
-            
-        try:
-            applicant_score = float(applicant_data[18].iloc[0])
-        except (IndexError, ValueError) as e:
-            logger.error(f"Ошибка получения балла абитуриента: {e}")
-            return None
+        if applicant_data.empty:
+            logger.warning(f"Не найдена запись абитуриента (ID: 4272684, приоритет: {target_priority}, квота: ДА)")
+            return "❌ Ваши данные не найдены. Проверьте, правильно ли указаны приоритет и квота."
         
-        # 1. Рейтинг среди 1 приоритета (с проверкой квоты)
-        priority1_applicants = df[
-            (df[11].astype(str).str.strip() == "1") &
-            (df[9].astype(str).str.strip().str.upper() == "ДА")
+        applicant_score = float(applicant_data[18].iloc[0])
+
+        # 1. БВИ с согласием (4="Да", 10="Да", 12="1", 25="Да")
+        bvi_consents = len(df[
+            (df[3].astype(str).str.strip().str.upper() == "ДА") &    # БВИ
+            (df[9].astype(str).str.strip().str.upper() == "ДА") &     # Квота
+            (df[11].astype(str).str.strip() == "1") &                 # Приоритет 1
+            (df[24].astype(str).str.strip().str.upper() == "ДА")      # Согласие
+        ])
+
+        # 2. Не БВИ с согласием и баллом выше (10="Да", 12="1", 25="Да", балл > user_score, 4≠"Да")
+        non_bvi_higher = len(df[
+            (df[9].astype(str).str.strip().str.upper() == "ДА") &    # Квота
+            (df[11].astype(str).str.strip() == "1") &                # Приоритет 1
+            (df[24].astype(str).str.strip().str.upper() == "ДА") &   # Согласие
+            (df[18] > applicant_score) &                             # Балл выше
+            (df[3].astype(str).str.strip().str.upper() != "ДА")      # Не БВИ
+        ])
+
+        # 3. Текущее место при подаче согласия
+        current_position = bvi_consents + non_bvi_higher + 1
+
+        # 4. Рейтинг в своем приоритете
+        priority_applicants = df[
+            (df[9].astype(str).str.strip().str.upper() == "ДА") & 
+            (df[11].astype(str).str.strip() == str(target_priority))
         ].copy()
         
-        if priority1_applicants.empty:
-            logger.warning("Нет данных по 1 приоритету")
-            return None
-            
-        priority1_applicants = priority1_applicants.sort_values(by=18, ascending=False)
-        priority1_applicants['rank'] = range(1, len(priority1_applicants) + 1)
+        priority_applicants = priority_applicants.sort_values(by=18, ascending=False)
+        priority_applicants['rank'] = range(1, len(priority_applicants) + 1)
         
         try:
-            applicant_rank = priority1_applicants[
-                priority1_applicants[1].astype(str).str.strip() == "4272684"
+            applicant_rank = priority_applicants[
+                priority_applicants[1].astype(str).str.strip() == "4272684"
             ]['rank'].iloc[0]
         except IndexError:
-            logger.warning("Не удалось определить рейтинг абитуриента")
-            return None
-        
-        # 2. БВИ с согласием (4="Да", 10="Да", 12="1", 25="Да")
-        bvi_consents = len(df[
-            (df[3].astype(str).str.strip().str.upper() == "ДА") &
-            (df[9].astype(str).str.strip().str.upper() == "ДА") &
-            (df[11].astype(str).str.strip() == "1") &
-            (df[24].astype(str).str.strip().str.upper() == "ДА")
-        ])
-        
-        # 3. НЕ БВИ с согласием и баллом выше (10="Да", 12="1", 25="Да", балл > user_score, 4≠"Да")
-        non_bvi_higher = len(df[
-            (df[9].astype(str).str.strip().str.upper() == "ДА") &
-            (df[11].astype(str).str.strip() == "1") &
-            (df[24].astype(str).str.strip().str.upper() == "ДА") &
-            (df[18] > applicant_score) &
-            (df[3].astype(str).str.strip().str.upper() != "ДА")
-        ])
-        
-        # 4. Текущее место при подаче согласия
-        current_position = bvi_consents + non_bvi_higher
-        
+            applicant_rank = "не определен"
+
         # Формирование сообщения
         if is_update:
             rank_change = format_change(applicant_rank, program.get("last_rank", None))
@@ -364,7 +358,7 @@ async def process_hse_data(program_key, user_id=None, is_update=False):
                 f"📌 *Направление:* {program['name']}\n\n"
                 f"📅 *Дата обновления:* {report_datetime}\n\n"
                 f"🎯 Всего мест на программе: *{places}*\n\n"
-                f"✅ Твой рейтинг среди 1 приоритета: *{applicant_rank}{rank_change}*\n\n"
+                f"✅ Твой рейтинг среди {target_priority} приоритета: *{applicant_rank}{rank_change}*\n\n"
                 f"👥 Количество согласий у БВИ: *{bvi_consents}{bvi_change}*\n\n"
                 f"📊 Количество согласий у людей с баллом выше (не БВИ): *{non_bvi_higher}{higher_change}*\n\n"
                 f"🏆 Твое текущее место, если подашь согласие: *{current_position}{pos_change}*"
@@ -374,7 +368,7 @@ async def process_hse_data(program_key, user_id=None, is_update=False):
                 f"📌 *Направление:* {program['name']}\n\n"
                 f"📅 *Дата обновления:* {report_datetime}\n\n"
                 f"🎯 Всего мест на программе: *{places}*\n\n"
-                f"✅ Твой рейтинг среди 1 приоритета: *{applicant_rank}*\n\n"
+                f"✅ Твой рейтинг среди {target_priority} приоритета: *{applicant_rank}*\n\n"
                 f"👥 Количество согласий у БВИ: *{bvi_consents}*\n\n"
                 f"📊 Количество согласий у людей с баллом выше (не БВИ): *{non_bvi_higher}*\n\n"
                 f"🏆 Твое текущее место, если подашь согласие: *{current_position}*"
@@ -390,8 +384,8 @@ async def process_hse_data(program_key, user_id=None, is_update=False):
         return result_msg
         
     except Exception as e:
-        logger.error(f"Ошибка обработки данных ВШЭ: {e}", exc_info=True)
-        return None
+        logger.error(f"Ошибка обработки данных: {e}", exc_info=True)
+        return f"⚠️ Ошибка обработки данных: {str(e)}"
 
 async def process_data(program_key, user_id=None, is_update=False):
     """Универсальная функция обработки данных"""
