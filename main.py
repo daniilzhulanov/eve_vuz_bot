@@ -99,8 +99,7 @@ def get_reply_keyboard():
     keyboard = [
         [types.KeyboardButton(text="📊 ВШЭ Экономика")],
         [types.KeyboardButton(text="📘 ВШЭ Совбак НИУ ВШЭ и РЭШ")],
-        [types.KeyboardButton(text="🏛️ МГУ Экономика")],
-        [types.KeyboardButton(text="🔄 Обновить данные")]
+        [types.KeyboardButton(text="🏛️ МГУ Экономика")]
     ]
     return types.ReplyKeyboardMarkup(
         keyboard=keyboard,
