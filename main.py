@@ -269,7 +269,7 @@ async def process_mgu_data(program_key, user_id=None, is_update=False):
         return None
 
 async def process_hse_data(program_key, user_id=None, is_update=False):
-    """Обработка данных ВШЭ (оригинальная логика)"""
+    """Обработка данных ВШЭ с полным соответствием требованиям"""
     program = PROGRAMS[program_key]
     try:
         content = await download_data(program["url"])
@@ -290,85 +290,85 @@ async def process_hse_data(program_key, user_id=None, is_update=False):
         target_priority = program["priority"]
         places = program["places"]
         
-        # Преобразуем баллы в числа и фильтруем некорректные значения
+        # Преобразуем баллы в числа
         df[18] = pd.to_numeric(df[18], errors='coerce')
-        df = df[pd.notna(df[18])]  # Удаляем строки с некорректными баллами
+        df = df[pd.notna(df[18])]
+
+        # Находим данные абитуриента
+        applicant_data = df[df[1].astype(str).str.strip() == "4272684"]
+        if applicant_data.empty:
+            return None
+            
+        applicant_score = float(applicant_data[18].values[0])
         
-        # Фильтрация по квоте (столбец 9) и приоритету (столбец 11)
-        filtered = df[
-            (df[9].astype(str).str.strip().str.upper() == "ДА") & 
-            (df[11].astype(str).str.strip() == str(target_priority))
+        # 1. Рейтинг среди 1 приоритета
+        priority1_applicants = df[
+            (df[11].astype(str).str.strip() == "1") &  # 12й столбец - приоритет
+            (df[9].astype(str).str.strip().str.upper() == "ДА")  # Квота
         ].copy()
         
-        if filtered.empty:
-            return None
+        priority1_applicants = priority1_applicants.sort_values(by=18, ascending=False)
+        priority1_applicants['rank'] = range(1, len(priority1_applicants) + 1)
         
-        filtered = filtered.sort_values(by=18, ascending=False)
-        filtered['rank'] = range(1, len(filtered) + 1)
-
-        applicant = filtered[filtered[1].astype(str).str.strip() == "4272684"]  
-        if applicant.empty:
-            return None
+        applicant_rank = priority1_applicants[
+            priority1_applicants[1].astype(str).str.strip() == "4272684"
+        ]['rank'].values[0]
         
-        rank = applicant['rank'].values[0]
-        score = float(applicant[18].values[0])  # Явное преобразование в float
+        # 2. БВИ с согласием (4="Да", 12="1", 25="Да")
+        bvi_consents = len(df[
+            (df[3].astype(str).str.strip().str.upper() == "ДА") &    # 4й столбец - БВИ
+            (df[11].astype(str).str.strip() == "1") &                # 12й столбец - приоритет
+            (df[24].astype(str).str.strip().str.upper() == "ДА")     # 25й столбец - согласие
+        ])
         
-        # Расчет людей с другим приоритетом и баллом выше (без согласия)
-        other_priority = 1 if target_priority == 2 else 2
-        filtered_other = df[
-            (df[9].astype(str).str.strip().str.upper() == "ДА") & 
-            (df[11].astype(str).str.strip() == str(other_priority))
-        ].copy()
+        # 3. НЕ БВИ с согласием и баллом выше (12="1", 25="Да", балл > user_score, 4≠"Да")
+        non_bvi_higher = len(df[
+            (df[11].astype(str).str.strip() == "1") &                # Приоритет 1
+            (df[24].astype(str).str.strip().str.upper() == "ДА") &   # Согласие
+            (df[18] > applicant_score) &                             # Балл выше
+            (df[3].astype(str).str.strip().str.upper() != "ДА")      # Не БВИ
+        ])
         
-        count_higher = 0
-        if not filtered_other.empty:
-            higher_other = filtered_other[filtered_other[18] > score]
-            count_higher = len(higher_other)
-
-        # Фильтр для согласий (используем столбец 25 как указано в комментарии)
-        consent_priority = 1
-        consent_filtered = df[
-            (df[9].astype(str).str.strip().str.upper() == "ДА") &
-            (df[11].astype(str).str.strip() == str(consent_priority)) &
-            (df[24].astype(str).str.strip().str.upper() == "ДА") &  # Столбец 25 для согласия
-            (df[18] > score)
-        ]
+        # 4. Текущее место при подаче согласия
+        current_position = bvi_consents + non_bvi_higher + 1
         
-        count_consent_higher = len(consent_filtered)
-        
-        # Формируем сообщение с изменениями
-        rank_change = format_change(rank, program["last_rank"])
-        higher_change = format_change(count_higher, program["last_other_higher"])
-        consent_change = format_change(count_consent_higher, program["last_consent_higher"])
-        
-        # Обновляем сообщение с новым пунктом
+        # Формирование сообщения с изменениями
         if is_update:
+            rank_change = format_change(applicant_rank, program.get("last_rank", None))
+            bvi_change = format_change(bvi_consents, program.get("last_bvi_consents", None))
+            higher_change = format_change(non_bvi_higher, program.get("last_non_bvi_higher", None))
+            pos_change = format_change(current_position, program.get("last_position", None))
+            
             result_msg = (
                 f"🔔 *Обновление данных*\n"
                 f"📌 *Направление:* {program['name']}\n\n"
                 f"📅 *Дата обновления:* {report_datetime}\n\n"
-                f"🎯 Мест на программе: *{places}*\n\n"
-                f"✅ Твой рейтинг среди {target_priority} приоритета: *{rank}{rank_change}*\n\n"
-                f"📥 Подано согласий с баллом выше (для 1 приоритета): *{count_consent_higher}{consent_change}*\n\n"
-                f"🔺 Людей с {other_priority} приоритетом и баллом выше: *{count_higher}{higher_change}*"
+                f"🎯 Всего мест на программе: *{places}*\n\n"
+                f"✅ Твой рейтинг среди 1 приоритета: *{applicant_rank}{rank_change}*\n\n"
+                f"👥 Количество согласий у БВИ: *{bvi_consents}{bvi_change}*\n\n"
+                f"📊 Количество согласий у людей с баллом выше (не БВИ): *{non_bvi_higher}{higher_change}*\n\n"
+                f"🏆 Твое место, если подашь согласие: *{current_position}{pos_change}*"
             )
         else:
             result_msg = (
                 f"📌 *Направление:* {program['name']}\n\n"
                 f"📅 *Дата обновления:* {report_datetime}\n\n"
-                f"🎯 Мест на программе: *{places}*\n\n"
-                f"✅ Твой рейтинг среди {target_priority} приоритета: *{rank}*\n\n"
-                f"📥 Подано согласий с баллом выше (для 1 приоритета): *{count_consent_higher}*\n\n"
-                f"🔺 Людей с {other_priority} приоритетом и баллом выше: *{count_higher}*"
+                f"🎯 Всего мест на программе: *{places}*\n\n"
+                f"✅ Твой рейтинг среди 1 приоритета: *{applicant_rank}*\n\n"
+                f"👥 Количество согласий у БВИ: *{bvi_consents}*\n\n"
+                f"📊 Количество согласий у людей с баллом выше (не БВИ): *{non_bvi_higher}*\n\n"
+                f"🏆 Твое место, если подашь согласие: *{current_position}*"
             )
         
         # Сохраняем текущие значения
         program["last_hash"] = current_hash
-        program["last_rank"] = rank
-        program["last_other_higher"] = count_higher
-        program["last_consent_higher"] = count_consent_higher  
+        program["last_rank"] = applicant_rank
+        program["last_bvi_consents"] = bvi_consents
+        program["last_non_bvi_higher"] = non_bvi_higher
+        program["last_position"] = current_position
         
         return result_msg
+        
     except Exception as e:
         logger.error(f"Ошибка обработки данных ВШЭ: {e}")
         return None
