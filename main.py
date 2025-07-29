@@ -1,7 +1,6 @@
 import pandas as pd
 from io import BytesIO
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.enums import ParseMode
 from aiogram.filters import Command
 import asyncio
@@ -95,17 +94,23 @@ def log_user_action(user_id: int, action: str):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     logger.info(f"User ID: {user_id} - Action: {action} - Time: {timestamp}")
 
-def get_program_keyboard(include_refresh=False, current_program=None):
-    buttons = [
-        [InlineKeyboardButton(text="📊 ВШЭ Экономика", callback_data="hse")],
-        [InlineKeyboardButton(text="📘 ВШЭ Совбак НИУ ВШЭ и РЭШ", callback_data="resh")],
-        [InlineKeyboardButton(text="🏛️ МГУ Экономика", callback_data="mgu")]
+def get_reply_keyboard():
+    """Создает Reply-клавиатуру с кнопками выбора программ"""
+    keyboard = [
+        [
+            types.KeyboardButton(text="📊 ВШЭ Экономика"),
+            types.KeyboardButton(text="📘 ВШЭ Совбак НИУ ВШЭ и РЭШ"),
+        ],
+        [
+            types.KeyboardButton(text="🏛️ МГУ Экономика"),
+            types.KeyboardButton(text="🔄 Обновить данные")
+        ]
     ]
-    
-    if include_refresh and current_program in PROGRAMS:
-        buttons.append([InlineKeyboardButton(text="🔄 Обновить данные", callback_data=f"refresh_{current_program}")])
-    
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
+    return types.ReplyKeyboardMarkup(
+        keyboard=keyboard,
+        resize_keyboard=True,
+        is_persistent=True
+    )
 
 async def download_data(url):
     async with aiohttp.ClientSession() as session:
@@ -413,11 +418,7 @@ async def check_updates(bot: Bot):
                             await bot.send_message(
                                 user_id,
                                 update_msg,
-                                parse_mode=ParseMode.MARKDOWN,
-                                reply_markup=get_program_keyboard(
-                                    include_refresh=True,
-                                    current_program=program_key
-                                )
+                                parse_mode=ParseMode.MARKDOWN
                             )
                         except Exception as e:
                             logger.error(f"Ошибка отправки пользователю {user_id}: {e}")
@@ -428,89 +429,60 @@ async def check_updates(bot: Bot):
 
 async def start(message: types.Message):
     user_id = message.from_user.id
-    active_users.add(user_id)  # Добавляем пользователя в список активных
+    active_users.add(user_id)
     log_user_action(user_id, "Started bot")
     await message.answer(
         "Выберите программу для анализа рейтинга:",
-        reply_markup=get_program_keyboard()
+        reply_markup=get_reply_keyboard()
     )
 
-async def process_program(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    active_users.add(user_id)  # Добавляем пользователя в список активных
+async def handle_program_selection(message: types.Message):
+    user_id = message.from_user.id
+    active_users.add(user_id)
     
-    if callback.data.startswith("refresh_"):
-        key = callback.data.split("_")[1]
-        await callback.answer("Обновляем данные...")
-    else:
-        key = callback.data
+    program_mapping = {
+        "📊 ВШЭ Экономика": "hse",
+        "📘 ВШЭ Совбак НИУ ВШЭ и РЭШ": "resh",
+        "🏛️ МГУ Экономика": "mgu",
+        "🔄 Обновить данные": None
+    }
     
-    if key not in PROGRAMS:
-        await callback.answer("Неизвестная программа")
+    key = program_mapping.get(message.text)
+    if key is None:
+        if message.text == "🔄 Обновить данные":
+            # Логика для обновления последней просмотренной программы
+            await message.answer("Пожалуйста, выберите программу для обновления")
+            return
+        await message.answer("Неизвестная команда")
         return
-        
-    program = PROGRAMS[key]
+    
+    program = PROGRAMS.get(key)
+    if not program:
+        await message.answer("Программа не найдена")
+        return
+    
     log_user_action(user_id, f"Selected program: {program['name']}")
     
     try:
-        await callback.answer()
-        
-        # Отправляем сообщение "Загружаю данные..."
-        loading_msg = await callback.message.answer(
-            "⏳ Загружаю данные...",
-            reply_markup=get_program_keyboard(
-                include_refresh=True,
-                current_program=key
-            )
-        )
+        # Отправляем сообщение о загрузке
+        loading_msg = await message.answer("⏳ Загружаю данные...")
         
         status_msg = await process_data(key, user_id)
         
+        # Удаляем сообщение о загрузке
+        await loading_msg.delete()
+        
         if status_msg:
-            # Удаляем сообщение "Загружаю данные..."
-            try:
-                await loading_msg.delete()
-            except Exception as e:
-                logger.error(f"Ошибка при удалении сообщения: {e}")
-            
-            # Отправляем результат
-            await callback.message.answer(
+            await message.answer(
                 status_msg,
-                parse_mode=ParseMode.MARKDOWN,
-                reply_markup=get_program_keyboard(
-                    include_refresh=True,
-                    current_program=key
-                )
+                parse_mode=ParseMode.MARKDOWN
             )
         else:
-            # Удаляем сообщение "Загружаю данные..."
-            try:
-                await loading_msg.delete()
-            except Exception as e:
-                logger.error(f"Ошибка при удалении сообщения: {e}")
-                
-            await callback.message.answer(
-                "❌ Не удалось получить данные",
-                reply_markup=get_program_keyboard(
-                    include_refresh=True,
-                    current_program=key
-                )
-            )
+            await message.answer("❌ Не удалось получить данные")
+            
     except Exception as e:
         logger.error(f"Ошибка: {e}")
-        # Удаляем сообщение "Загружаю данные..." в случае ошибки
-        try:
-            await loading_msg.delete()
-        except Exception as e:
-            logger.error(f"Ошибка при удалении сообщения: {e}")
-            
-        await callback.message.answer(
-            "⚠️ Произошла ошибка",
-            reply_markup=get_program_keyboard(
-                include_refresh=True,
-                current_program=key
-            )
-        )
+        await message.answer("⚠️ Произошла ошибка")
 
 async def on_startup(bot: Bot):
     global check_task
@@ -529,7 +501,12 @@ async def main():
     dp.shutdown.register(on_shutdown)
     
     dp.message.register(start, Command("start"))
-    dp.callback_query.register(process_program)
+    dp.message.register(handle_program_selection, F.text.in_([
+        "📊 ВШЭ Экономика",
+        "📘 ВШЭ Совбак НИУ ВШЭ и РЭШ",
+        "🏛️ МГУ Экономика",
+        "🔄 Обновить данные"
+    ]))
     
     await dp.start_polling(bot)
 
