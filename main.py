@@ -350,7 +350,7 @@ async def process_hse_data(program_key, user_id=None, is_update=False):
         ])
         
         # 4. Текущее место при подаче согласия
-        current_position = bvi_consents + non_bvi_higher + 1
+        current_position = bvi_consents + non_bvi_higher
         
         # Формирование сообщения
         if is_update:
